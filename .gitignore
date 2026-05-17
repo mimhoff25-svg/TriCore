@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+backend/.venv/
+backend/uvicorn*.log
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
+
+# Runtime logs and captures
+logs/
+*.log
+*.raw
+*.err
+np.json
+
+# Local SDR/runtime binaries copied into the app
+tools/tricore-sdr/
+tools/sdr-trunk*/
+
+# Local app/user state
+data/*.db
+data/*.sqlite
+data/captures/
+*.tmp
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large downloaded installers/packages
+*.zip
+*.7z
+*.msi
+*.exe
