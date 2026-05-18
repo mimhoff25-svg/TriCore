@@ -79,6 +79,10 @@ class GainPayload(BaseModel):
     gain_db: Optional[float] = None
 
 
+class ReceiverModePayload(BaseModel):
+    simulated: bool
+
+
 class Talkgroup(BaseModel):
     id: str
     decimal: int

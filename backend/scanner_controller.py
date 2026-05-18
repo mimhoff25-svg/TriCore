@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .conventional_scanner import next_scannable_channel
+from .conventional_scanner import is_channel_available, next_scannable_channel_index
 from .database import load_channels, load_talkgroups, save_user_channel
 from .headless_p25_runtime import HeadlessP25Runtime
 from .models import (
@@ -38,19 +38,33 @@ class ScannerController:
         self.calls: deque[CallEntry] = deque(maxlen=80)
         self.status = ScannerStatus(message=self.device.status_message(), simulated=self.device.simulated)
         self.fm_player = FmPlayerStatus()
-        decoder_snapshot = self.decoder.status(force_probe=False)
+        decoder_snapshot = self._phase1_decoder_snapshot()
         self.p25 = P25Status(
             state=self._p25_state_for_health(str(decoder_snapshot.get("health") or "stopped")),
             preferred_control_channel_hz=self._preferred_control_channel(),
             message=str(decoder_snapshot.get("message") or "Headless P25 runtime idle."),
             external_decoder=decoder_snapshot,
-            voice_scan_error=None if decoder_snapshot.get("health") in {"ready", "stopped"} else str(decoder_snapshot.get("message")),
+            voice_scan_error=None,
             voice_sweep_stats={"sweeps": 0, "last_sweep_ms": 0, "channels": self._voice_channel_count()},
         )
         self.channel_filter: Optional[list[str]] = None
         self.system_filter: Optional[list[str]] = None
+        self.skipped_channel_ids: set[str] = set()
         self.scan_index = 0
+        self.is_paused = False
+        self.error_message: Optional[str] = None
         self._refresh_runtime()
+
+    def _phase1_decoder_snapshot(self) -> dict[str, object]:
+        return {
+            "running": False,
+            "health": "stopped",
+            "message": "P25/trunking decoder idle. Phase 1 conventional scanner mode is active.",
+            "headless": True,
+            "managed": True,
+            "activity": {},
+            "control_channel_hz": None,
+        }
 
     def _runtime_ready(self, tools: dict[str, bool]) -> bool:
         required = ("fmp24", "dsdplus")
@@ -144,7 +158,10 @@ class ScannerController:
     def _refresh_runtime(self, force_probe: bool = False) -> None:
         self.device.refresh(force=force_probe)
         tools = detect_runtime_tools()
-        decoder_snapshot = self.decoder.status(force_probe=force_probe)
+        if force_probe or self.p25.running or self.p25.selected_talkgroup:
+            decoder_snapshot = self.decoder.status(force_probe=force_probe)
+        else:
+            decoder_snapshot = self._phase1_decoder_snapshot()
         self.runtime = RuntimeStatus(
             ready=self._runtime_ready(tools),
             runtime_root=runtime_root(),
@@ -370,119 +387,253 @@ class ScannerController:
             channels = [channel for channel in channels if channel.system in allowed_systems]
         return channels
 
-    def scanner_status(self) -> ScannerStatus:
+    def _available_channel_count(self, channels: list[Channel]) -> int:
+        return sum(1 for channel in channels if is_channel_available(channel, self.skipped_channel_ids))
+
+    def _public_channel(self, channel: Optional[Channel]) -> Optional[dict[str, object]]:
+        if channel is None:
+            return None
+        payload = channel.model_dump()
+        unavailable = bool(channel.encrypted)
+        payload["unavailable"] = unavailable
+        payload["availability"] = "Unavailable" if unavailable else "Available"
+        payload["channel_id"] = channel.id
+        return payload
+
+    def _scanner_state_label(self) -> str:
+        if self.is_paused:
+            return "Paused"
+        if self.status.held:
+            return "Holding"
+        if self.status.state in {"SCANNING", "RECEIVING_CALL"}:
+            return "Scanning"
+        return "Stopped"
+
+    def _status_payload(self) -> dict[str, object]:
+        channel = self.status.active_channel
+        public_channel = self._public_channel(channel)
+        state = "PAUSED" if self.is_paused else self.status.state
+        is_scanning = state in {"SCANNING", "RECEIVING_CALL"} and not self.status.held
+        return {
+            "is_scanning": is_scanning,
+            "is_paused": self.is_paused,
+            "is_muted": self.status.muted,
+            "is_holding": self.status.held,
+            "current_channel": public_channel,
+            "current_frequency_hz": channel.frequency_hz if channel else None,
+            "signal_level": self.status.signal_power,
+            "receiver_mode": self.device.receiver_label,
+            "simulated": self.device.simulated,
+            "error_message": self.error_message or self.device.error_message,
+            "scanner_state": self._scanner_state_label(),
+            "state": state,
+            "message": self.status.message,
+            "held": self.status.held,
+            "muted": self.status.muted,
+            "active_channel": public_channel,
+            "signal_power": self.status.signal_power,
+            "signal_threshold": self.status.signal_threshold,
+            "gain_db": self.status.gain_db,
+            "channels_scanned": self.status.channels_scanned,
+            "in_delay": self.status.in_delay,
+            "delay_remaining": self.status.delay_remaining,
+        }
+
+    def scanner_status(self) -> dict[str, object]:
         if self.fm_player.playing:
             self.status = self.status.model_copy(update={"simulated": self.device.simulated})
-            return self.status
+            return self._status_payload()
         if self.p25.selected_talkgroup or self.p25.running:
             self._sync_p25_runtime()
         self.status = self.status.model_copy(update={"simulated": self.device.simulated})
-        return self.status
+        return self._status_payload()
 
-    def start_scanner(self) -> ScannerStatus:
-        self.stop_fm()
-        self.stop_p25()
-        channels = self._filtered_channels()
-        selected = next_scannable_channel(channels, self.scan_index)
-        if selected is None:
-            self.status = self.status.model_copy(update={
-                "state": "NO_SIGNAL",
-                "message": "No channels available for scan.",
-                "active_channel": None,
-                "channels_scanned": 0,
-            })
-            return self.status
-
-        self.scan_index = (self.scan_index + 1) % max(len(channels), 1)
+    def _set_no_available_status(self) -> dict[str, object]:
         self.status = self.status.model_copy(update={
-            "state": "SCANNING",
-            "message": f"Scanning {len(channels)} channels.",
-            "active_channel": selected,
-            "channels_scanned": len(channels),
+            "state": "NO_SIGNAL",
+            "message": "No available non-encrypted channels to scan.",
+            "active_channel": None,
+            "channels_scanned": 0,
             "held": False,
             "in_delay": False,
             "delay_remaining": 0.0,
-            "signal_power": -61.5,
             "simulated": self.device.simulated,
         })
-        self._record_call(selected.name, selected.frequency_hz, selected.service_type)
-        return self.status
+        self.is_paused = False
+        return self.scanner_status()
 
-    def stop_scanner(self) -> ScannerStatus:
+    def _select_next_available(self, state: str, message: str, held: bool = False) -> dict[str, object]:
+        channels = self._filtered_channels()
+        selected = next_scannable_channel_index(channels, self.scan_index, self.skipped_channel_ids)
+        if selected is None:
+            return self._set_no_available_status()
+
+        selected_index, channel = selected
+        self.scan_index = (selected_index + 1) % max(len(channels), 1)
+        self.error_message = None
+        self.status = self.status.model_copy(update={
+            "state": state,
+            "message": message,
+            "active_channel": channel,
+            "channels_scanned": self._available_channel_count(channels),
+            "held": held,
+            "in_delay": False,
+            "delay_remaining": 0.0,
+            "signal_power": -64.0 + ((selected_index % 5) * 2.5),
+            "simulated": self.device.simulated,
+        })
+        return self.scanner_status()
+
+    def start_scanner(self) -> dict[str, object]:
+        self.skipped_channel_ids.clear()
+        self.is_paused = False
+        channels = self._filtered_channels()
+        available_count = self._available_channel_count(channels)
+        return self._select_next_available("SCANNING", f"Scanning {available_count} available channels.")
+
+    def stop_scanner(self) -> dict[str, object]:
+        self.is_paused = False
         self.status = self.status.model_copy(update={
             "state": "READY",
             "message": "Scanner stopped.",
             "held": False,
             "in_delay": False,
             "delay_remaining": 0.0,
+            "simulated": self.device.simulated,
         })
-        return self.status
+        return self.scanner_status()
 
-    def tune_channel(self, channel_id: str) -> ScannerStatus:
+    def pause_scanner(self) -> dict[str, object]:
+        self.is_paused = True
+        self.status = self.status.model_copy(update={
+            "state": "PAUSED",
+            "message": "Scanner paused.",
+            "held": False,
+            "in_delay": False,
+            "delay_remaining": 0.0,
+            "simulated": self.device.simulated,
+        })
+        return self.scanner_status()
+
+    def resume_scanner(self) -> dict[str, object]:
+        self.is_paused = False
+        if self.status.active_channel is None:
+            return self.start_scanner()
+        self.status = self.status.model_copy(update={
+            "state": "SCANNING",
+            "message": "Scanner resumed.",
+            "held": False,
+            "in_delay": False,
+            "delay_remaining": 0.0,
+            "simulated": self.device.simulated,
+        })
+        return self.scanner_status()
+
+    def next_channel(self) -> dict[str, object]:
+        held = self.status.held
+        paused = self.is_paused
+        active = self.status.state in {"SCANNING", "RECEIVING_CALL"}
+        state = "HOLDING_CHANNEL" if held else ("PAUSED" if paused else ("SCANNING" if active else "READY"))
+        return self._select_next_available(state, "Moved to next available channel.", held=held)
+
+    def tune_channel(self, channel_id: str) -> dict[str, object]:
         channel = next((item for item in self.channels if item.id == channel_id), None)
         if channel is None:
+            self.error_message = "Channel not found."
             self.status = self.status.model_copy(update={"state": "ERROR", "message": "Channel not found."})
-            return self.status
+            return self.scanner_status()
 
-        self.stop_fm()
-        self.stop_p25()
+        if channel.encrypted:
+            self.skipped_channel_ids.add(channel.id)
+            self.error_message = f"{channel.name} is Unavailable because it is encrypted."
+            if self.status.active_channel and not self.status.active_channel.encrypted:
+                self.status = self.status.model_copy(update={"message": self.error_message})
+                return self.scanner_status()
+            return self._select_next_available("SCANNING", self.error_message)
+
+        self.is_paused = False
+        self.error_message = None
         self.status = self.status.model_copy(update={
             "state": "RECEIVING_CALL",
             "message": f"Tuned {channel.name}.",
             "active_channel": channel,
             "held": False,
+            "in_delay": False,
+            "delay_remaining": 0.0,
             "signal_power": -53.0,
             "simulated": self.device.simulated,
         })
-        self._record_call(channel.name, channel.frequency_hz, channel.service_type)
-        return self.status
+        return self.scanner_status()
 
-    def hold(self) -> ScannerStatus:
+    def hold(self) -> dict[str, object]:
+        if self.status.active_channel is None:
+            self._select_next_available("HOLDING_CHANNEL", "Stay Here active.", held=True)
+        self.is_paused = False
         state = "HOLDING_CHANNEL" if self.status.active_channel else self.status.state
         self.status = self.status.model_copy(update={
             "state": state,
-            "held": True,
-            "message": "Hold active.",
+            "held": True if self.status.active_channel else False,
+            "message": "Stay Here active." if self.status.active_channel else "No channel available to hold.",
+            "simulated": self.device.simulated,
         })
-        return self.status
+        return self.scanner_status()
 
-    def clear_hold(self) -> ScannerStatus:
+    def release_hold(self) -> dict[str, object]:
+        self.is_paused = False
         state = "SCANNING" if self.status.active_channel else "READY"
         self.status = self.status.model_copy(update={
             "state": state,
             "held": False,
-            "message": "Hold cleared.",
+            "message": "Stay Here released.",
+            "simulated": self.device.simulated,
         })
-        return self.status
+        return self.scanner_status()
 
-    def skip(self) -> ScannerStatus:
-        self.status = self.status.model_copy(update={
-            "message": "Skipped current channel.",
-            "in_delay": True,
-            "delay_remaining": 1.5,
-        })
-        return self.start_scanner()
+    def clear_hold(self) -> dict[str, object]:
+        return self.release_hold()
 
-    def set_mute(self, muted: bool) -> ScannerStatus:
+    def skip(self) -> dict[str, object]:
+        current = self.status.active_channel
+        if current is not None:
+            self.skipped_channel_ids.add(current.id)
+        self.is_paused = False
+        return self._select_next_available("SCANNING", "Current channel hidden for this session.", held=False)
+
+    def set_mute(self, muted: bool) -> dict[str, object]:
         self.status = self.status.model_copy(update={
             "muted": muted,
             "message": "Audio muted." if muted else "Audio unmuted.",
-            "state": "MUTED" if muted else self.status.state,
+            "simulated": self.device.simulated,
         })
-        return self.status
+        return self.scanner_status()
 
-    def set_gain(self, gain_db: Optional[float]) -> ScannerStatus:
+    def set_gain(self, gain_db: Optional[float]) -> dict[str, object]:
         self.status = self.status.model_copy(update={
             "gain_db": gain_db,
             "message": f"Gain set to {'auto' if gain_db is None else f'{gain_db:.1f} dB'}.",
+            "simulated": self.device.simulated,
         })
-        return self.status
+        return self.scanner_status()
+
+    def set_receiver_mode(self, simulated: bool) -> dict[str, object]:
+        self.device.set_simulated(simulated)
+        self.error_message = self.device.error_message
+        message = self.error_message or ("Demo receiver mode active." if simulated else "RTL-SDR receiver mode active.")
+        self.status = self.status.model_copy(update={
+            "message": message,
+            "simulated": self.device.simulated,
+        })
+        return self.scanner_status()
 
     def set_channel_filter(self, channel_ids: Optional[list[str]]) -> None:
         self.channel_filter = channel_ids
+        self.skipped_channel_ids.clear()
+        self.scan_index = 0
 
     def set_group_filter(self, systems: Optional[list[str]]) -> None:
         self.system_filter = systems
+        self.skipped_channel_ids.clear()
+        self.scan_index = 0
 
     def fm_stations(self) -> list[FmStation]:
         stations: list[FmStation] = []

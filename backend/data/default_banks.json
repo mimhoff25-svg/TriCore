@@ -1,0 +1,76 @@
+{
+  "banks": [
+    {
+      "id": "public-safety",
+      "name": "Public Safety",
+      "service_type": "public_safety",
+      "enabled": true,
+      "priority": 10,
+      "description": "Police, fire, EMS, emergency management, and interop channels."
+    },
+    {
+      "id": "fire-ems",
+      "name": "Fire / EMS",
+      "service_type": "fire_ems",
+      "enabled": true,
+      "priority": 20,
+      "description": "Fire dispatch, EMS, hospital, and rescue channels."
+    },
+    {
+      "id": "railroad",
+      "name": "Railroad",
+      "service_type": "railroad",
+      "enabled": true,
+      "priority": 30,
+      "description": "AAR railroad road, yard, and dispatcher channels."
+    },
+    {
+      "id": "airband",
+      "name": "Airband",
+      "service_type": "airband",
+      "enabled": true,
+      "priority": 40,
+      "description": "Aircraft AM voice channels."
+    },
+    {
+      "id": "marine",
+      "name": "Marine",
+      "service_type": "marine",
+      "enabled": true,
+      "priority": 50,
+      "description": "VHF marine channels."
+    },
+    {
+      "id": "noaa-weather",
+      "name": "NOAA Weather",
+      "service_type": "noaa_weather",
+      "enabled": true,
+      "priority": 5,
+      "description": "NOAA weather radio channels."
+    },
+    {
+      "id": "fm-broadcast",
+      "name": "FM Broadcast",
+      "service_type": "fm_broadcast",
+      "enabled": false,
+      "priority": 80,
+      "description": "Commercial and public FM broadcast stations."
+    },
+    {
+      "id": "business-local",
+      "name": "Business / Local",
+      "service_type": "business",
+      "enabled": true,
+      "priority": 70,
+      "description": "Schools, security, event, maintenance, and local business channels."
+    },
+    {
+      "id": "custom",
+      "name": "Custom",
+      "service_type": "custom",
+      "enabled": true,
+      "priority": 90,
+      "description": "User-created scanner bank."
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "bandplans": [
+    {
+      "id": "fm-broadcast",
+      "name": "FM Broadcast",
+      "service_type": "fm_broadcast",
+      "start_hz": 88000000,
+      "end_hz": 108000000,
+      "step_hz": 200000,
+      "modulation": "wfm",
+      "description": "Broadcast FM radio, 88 MHz to 108 MHz."
+    },
+    {
+      "id": "noaa-weather",
+      "name": "NOAA Weather",
+      "service_type": "noaa_weather",
+      "start_hz": 162400000,
+      "end_hz": 162550000,
+      "step_hz": 25000,
+      "modulation": "nfm",
+      "description": "NOAA weather channels."
+    },
+    {
+      "id": "airband",
+      "name": "Airband",
+      "service_type": "airband",
+      "start_hz": 118000000,
+      "end_hz": 137000000,
+      "step_hz": 25000,
+      "modulation": "am",
+      "description": "Aircraft AM voice band."
+    },
+    {
+      "id": "marine-vhf",
+      "name": "Marine VHF",
+      "service_type": "marine",
+      "start_hz": 156000000,
+      "end_hz": 162000000,
+      "step_hz": 25000,
+      "modulation": "nfm",
+      "description": "VHF marine band."
+    },
+    {
+      "id": "railroad-aar",
+      "name": "Railroad AAR",
+      "service_type": "railroad",
+      "start_hz": 160000000,
+      "end_hz": 161995000,
+      "step_hz": 15000,
+      "modulation": "nfm",
+      "description": "AAR railroad voice channels."
+    },
+    {
+      "id": "public-safety-vhf",
+      "name": "Public Safety VHF",
+      "service_type": "public_safety",
+      "start_hz": 150000000,
+      "end_hz": 174000000,
+      "step_hz": 12500,
+      "modulation": "nfm",
+      "description": "Public safety placeholder range. Local frequencies depend on your region and configuration."
+    },
+    {
+      "id": "public-safety-uhf",
+      "name": "Public Safety UHF",
+      "service_type": "public_safety",
+      "start_hz": 450000000,
+      "end_hz": 470000000,
+      "step_hz": 12500,
+      "modulation": "nfm",
+      "description": "UHF public safety placeholder range. Local frequencies depend on your region and configuration."
+    }
+  ]
+}

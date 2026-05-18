@@ -55,3 +55,32 @@ def find_runtime_tool(name: str) -> Optional[Path]:
 
 def runtime_root() -> str:
     return str(RUNTIME_ROOT)
+
+
+def rtl_sdr_library_dirs() -> list[Path]:
+    candidates = [
+        RUNTIME_ROOT / "rtl-sdr",
+        RUNTIME_ROOT / "dsdplus",
+        WORKSPACE_ROOT / "sdrpp_windows_x64",
+        WORKSPACE_ROOT / "sdrpp_windows_x64" / "sdrpp_windows_x64",
+        WORKSPACE_ROOT / "sdrpp_windows_x64" / "DSDPlus",
+        Path("C:/rtl-sdr"),
+        Path("C:/Program Files/PothosSDR/bin"),
+        Path("C:/Program Files/rtl-sdr"),
+        Path("C:/Program Files (x86)/rtl-sdr"),
+    ]
+    markers = ("rtlsdr.dll", "librtlsdr.dll", "libusb-1.0.dll")
+
+    existing: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        if not path.exists() or not path.is_dir():
+            continue
+        if not any((path / marker).exists() for marker in markers):
+            continue
+        normalized = str(path).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        existing.append(path)
+    return existing
