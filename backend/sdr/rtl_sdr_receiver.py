@@ -102,12 +102,15 @@ class RtlSdrReceiver(BaseReceiver):
                 label="RTL-SDR",
                 simulated=False,
                 available=False,
+                demo_available=True,
+                rtl_sdr_available=False,
                 tuned_frequency_hz=self.frequency_hz,
                 gain_db=self.gain_db,
                 squelch_db=self.squelch_db,
                 signal_level=-100.0,
                 message=message,
                 error_message=message,
+                last_rtl_error=message,
             )
 
         return ReceiverStatus(
@@ -115,6 +118,8 @@ class RtlSdrReceiver(BaseReceiver):
             label="RTL-SDR",
             simulated=False,
             available=True,
+            demo_available=True,
+            rtl_sdr_available=True,
             tuned_frequency_hz=self.frequency_hz,
             gain_db=self.gain_db,
             squelch_db=self.squelch_db,

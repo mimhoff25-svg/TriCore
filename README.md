@@ -1,106 +1,129 @@
 # TriCore Scanner
 
-TriCore Scanner is a Windows-first RTL-SDR scanner proof-of-concept with a clean scanner-appliance dashboard. Phase 1 focuses on conventional frequency scanning. It does not bypass encryption; encrypted channels must be marked `Unavailable`, muted, and skipped.
+TriCore is a standalone SDR scanner appliance app.
 
-The app starts in demo receiver mode, so the dashboard can scan and show activity without an RTL-SDR dongle connected. Real RTL-SDR mode can be enabled later after Zadig, `rtl_test.exe`, and the RTL-SDR DLLs are working.
+TriCore makes an RTL-SDR feel like a real scanner radio. It organizes frequencies into banks and service types, supports scanner-style controls, and keeps receiver/decoder logic inside one clean app.
 
-## Starter Plan
+## Current Focus
 
-1. Prove the RTL-SDR dongle works on Windows with Zadig and `rtl_test.exe`.
-2. Run the FastAPI backend and confirm `/api/status` responds.
-3. Add lawful local conventional frequencies to `configs/frequencies/sample_frequencies.json`.
-4. Start scanning from the React dashboard.
-5. Try manual gain values if the dongle works but the scanner does not stop on signals.
-6. Later phases can add SQLite logging, Smart Import, SDRTrunk reference behavior, and Linux backend nodes.
+Phase 1 is the scanner foundation:
 
-## Project Layout
+- scanner controls
+- banks and service types
+- bandplans and manual tune
+- demo mode with no hardware required
+- real RTL-SDR receiver support behind the backend receiver abstraction
+- scanner-style UI panels and channel charting
 
-```text
-tricore-scanner/
-  backend/
-    app.py
-    scanner_controller.py
-    sdr_device.py
-    conventional_scanner.py
-    windows_rtlsdr_tools.py
-    database.py
-    models.py
-  frontend/
-    src/
-      App.jsx
-      components/
-        TopBar.jsx
-        SystemList.jsx
-        NowListeningCard.jsx
-        ScannerControls.jsx
-        RecentCallTicker.jsx
-  configs/frequencies/sample_frequencies.json
-  sql/sql_create_scanner_tables.sql
-  data/recordings/
-  data/logs/
-```
+This phase is not focused on logging, transcription, Smart Import, or full P25 trunking.
 
-## Windows Setup
+- logging is not the current focus
+- Smart Import is later
+- P25/trunking is later
+- encrypted or unavailable channels must remain skipped and must never be decoded
 
-Run these commands in PowerShell where possible.
+## What TriCore Is
 
-### 1. Install Python 3
+TriCore is intended to feel like a real scanner radio rather than a loose collection of SDR helper tools.
 
-Install Python 3 from <https://www.python.org/downloads/windows/> and check "Add python.exe to PATH".
+The app already includes:
 
-```powershell
-python --version
-pip --version
-```
+- scanner core foundation
+- frequency manager foundation
+- SDR receiver abstraction
+- Demo receiver
+- RTL-SDR receiver implementation
+- decoder abstractions and placeholders
+- scanner-style React UI
+- default banks
+- default bandplans
+- backend tests
+- frontend production build
 
-### 2. Install Git
+## Main Architecture
 
-Install Git from <https://git-scm.com/download/win>.
+### Backend
 
-```powershell
-git --version
-```
-
-### 3. Install Node.js LTS
-
-Install Node.js LTS from <https://nodejs.org/>.
-
-```powershell
-node --version
-npm --version
-```
-
-### 4. Install Zadig
-
-Download Zadig from <https://zadig.akeo.ie/>. Plug in the RTL-SDR dongle before opening Zadig.
-
-### 5. Replace the RTL-SDR Driver With WinUSB
-
-1. Open Zadig as Administrator.
-2. Select `Options > List All Devices`.
-3. Choose `Bulk-In, Interface (Interface 0)` or the RTL-SDR device.
-4. Select `WinUSB`.
-5. Click `Replace Driver` or `Install Driver`.
-
-Do not select your keyboard, mouse, webcam, or audio device. If unsure, unplug the RTL-SDR, reopen Zadig, then plug it back in and look for the new device.
-
-### 6. Install RTL-SDR Command-Line Tools
-
-One simple Windows layout is:
-
-```powershell
-New-Item -ItemType Directory -Force C:\rtl-sdr
-```
-
-Download a Windows RTL-SDR tools ZIP that includes `rtl_test.exe`, extract it, and place the EXE/DLL files in:
+The rebuilt backend is organized around the scanner foundation:
 
 ```text
-C:\rtl-sdr
+backend/
+  api/
+  core/
+  data/
+  decoders/
+  radio/
+  sdr/
+  app.py
+  requirements.txt
 ```
 
-Then add `C:\rtl-sdr` to your user PATH, or run tools with the full path.
+Primary areas:
 
-### 7. Test the Dongle
+- `backend/core` for scanner state, actions, and orchestration
+- `backend/radio` for banks, bandplans, channels, frequency management, and shared models
+- `backend/sdr` for the receiver abstraction, Demo receiver, RTL-SDR receiver, and signal helpers
+- `backend/decoders` for decoder abstractions and placeholders
+- `backend/api` for scanner, frequency, and receiver routes
+- `backend/data` for default banks and bandplans
+
+### Frontend
+
+The scanner appliance UI is built around these components:
+
+- `TopStatusBar`
+- `BankPanel`
+- `NowListeningCard`
+- `ChannelChart`
+- `ScannerKeypad`
+- `SignalMeter`
+- `ReceiverPanel`
+- `SearchPanel`
+
+## Receiver Modes
+
+TriCore supports two receiver modes.
+
+### Demo Mode
+
+Demo mode works without hardware and is the safe fallback when an RTL-SDR is not available.
+
+Use Demo mode when:
+
+- no RTL-SDR dongle is attached
+- RTL-SDR DLLs are not installed yet
+- you want to test the scanner UI and backend behavior offline
+
+### RTL-SDR Mode
+
+Real RTL-SDR mode is implemented behind the backend receiver abstraction in `backend/sdr/rtl_sdr_receiver.py`.
+
+The frontend does not depend on `pyrtlsdr` directly and only uses the receiver status API.
+
+On Windows, real RTL-SDR mode requires:
+
+- Zadig
+- WinUSB
+- a working RTL-SDR dongle
+- RTL-SDR DLLs and tools available on the system or in TriCore runtime locations
+
+If no RTL-SDR dongle is detected, or the DLLs cannot be loaded, TriCore should fail gracefully and remain usable in Demo mode.
+
+## Windows Hardware Setup
+
+### 1. Install Zadig and WinUSB
+
+1. Plug in the RTL-SDR dongle.
+2. Open Zadig as Administrator.
+3. Enable `Options > List All Devices`.
+4. Select the RTL-SDR bulk interface.
+5. Install or replace the driver with `WinUSB`.
+
+### 2. Provide RTL-SDR tools and DLLs
+
+On Windows, TriCore can discover RTL-SDR DLLs from common runtime folders, including bundled runtime locations and paths such as `C:\rtl-sdr`.
+
+Typical validation command:
 
 ```powershell
 C:\rtl-sdr\rtl_test.exe -t
@@ -114,165 +137,138 @@ Using device 0
 Found Rafael Micro R820T tuner
 ```
 
-If that works, the Windows driver and dongle are ready.
+## API Overview
 
-### 8. Install Python Dependencies
+Primary scanner routes:
+
+- `GET /api/scanner/status`
+- `POST /api/scanner/start`
+- `POST /api/scanner/stop`
+- `POST /api/scanner/pause`
+- `POST /api/scanner/resume`
+- `POST /api/scanner/hold`
+- `POST /api/scanner/release`
+- `POST /api/scanner/skip`
+- `POST /api/scanner/next`
+- `POST /api/scanner/lockout`
+- `POST /api/scanner/priority`
+- `POST /api/scanner/manual-tune`
+- `POST /api/scanner/tune`
+- `POST /api/scanner/search/start`
+- `POST /api/scanner/search/stop`
+- `POST /api/scanner/squelch`
+- `POST /api/scanner/gain`
+- `POST /api/scanner/mute`
+- `POST /api/scanner/receiver-mode`
+
+Related frequency and receiver routes:
+
+- `GET /api/banks`
+- `POST /api/banks/{bank_id}/enable`
+- `POST /api/banks/{bank_id}/disable`
+- `GET /api/channels`
+- `GET /api/bandplans`
+- `GET /api/receiver/status`
+- `POST /api/receiver/mode`
+
+Compatibility aliases still exist where useful:
+
+- `GET /api/status`
+- `POST /api/scanner/release-hold`
+- `POST /api/scanner/clear-hold`
+
+## Scanner Wording
+
+TriCore uses scanner-friendly wording where possible:
+
+| Technical Term | TriCore Label |
+| --- | --- |
+| Hold | Stay Here |
+| Lockout | Hide Channel |
+| Encryption | Unavailable |
+| Talkgroup | Channel |
+| TGID | Channel ID |
+| Control Channel | System Signal |
+| Trunked System | Radio System |
+
+## Legacy and Transitional Files
+
+The repo still contains earlier or transitional modules such as:
+
+- `backend/scanner_controller.py`
+- `backend/sdr_device.py`
+- `backend/conventional_scanner.py`
+- `backend/windows_rtlsdr_tools.py`
+
+These should not be read as the main architecture of the rebuilt scanner foundation.
+
+- `backend/windows_rtlsdr_tools.py` remains an active support module for Windows RTL-SDR tool and DLL discovery
+- `backend/scanner_controller.py`, `backend/sdr_device.py`, and `backend/conventional_scanner.py` are legacy or transitional compatibility modules from earlier iterations
+
+The main scanner-appliance architecture for this phase is the `backend/core`, `backend/radio`, `backend/sdr`, `backend/decoders`, `backend/api`, and `backend/data` layout.
+
+## Experimental and Future Areas
+
+This pass does not expand:
+
+- logging
+- transcription
+- Smart Import
+- RadioReference scraping
+- full P25 trunking
+
+If earlier experimental files or endpoints still exist, they should be treated as future or transitional work unless they are needed for startup compatibility.
+
+## Run Commands
+
+Backend:
 
 ```powershell
-cd "D:\Scanner SDR\SDRTrunk\tricore-scanner\backend"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+cd "c:\Users\mimho\Documents\GitHub\Scanner SDR\SDRTrunk\tricore-scanner"
+backend\.venv\Scripts\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
-### 9. Run the Backend
+Frontend development server:
 
 ```powershell
-cd "D:\Scanner SDR\SDRTrunk\tricore-scanner"
-.\backend\.venv\Scripts\Activate.ps1
-python -m uvicorn backend.app:app --reload --host 127.0.0.1 --port 8000
-```
-
-Open:
-
-```text
-http://127.0.0.1:8000/api/status
-```
-
-To start scanning from PowerShell:
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/start
-```
-
-The default receiver mode is simulated, so this works without the dongle.
-
-To try gain now:
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/gain -ContentType "application/json" -Body '{"gain_db":28}'
-```
-
-To switch back to auto gain:
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/gain -ContentType "application/json" -Body '{"gain_db":null}'
-```
-
-To switch to real RTL-SDR mode later, stop scanning first and run:
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/receiver-mode -ContentType "application/json" -Body '{"simulated":false}'
-```
-
-To switch back to demo mode:
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/receiver-mode -ContentType "application/json" -Body '{"simulated":true}'
-```
-
-### 10. Run the Frontend
-
-```powershell
-cd "D:\Scanner SDR\SDRTrunk\tricore-scanner\frontend"
+cd "c:\Users\mimho\Documents\GitHub\Scanner SDR\SDRTrunk\tricore-scanner\frontend"
 npm install
 npm run dev
 ```
 
-Open:
-
-```text
-http://127.0.0.1:5173
-```
-
-## Frequency Config
-
-Edit:
-
-```text
-D:\Scanner SDR\SDRTrunk\tricore-scanner\configs\frequencies\sample_frequencies.json
-```
-
-Use frequencies in Hz:
-
-```json
-{
-  "id": "noaa-weather-demo",
-  "name": "NOAA Weather Demo",
-  "system": "Local Weather Radio",
-  "frequency_hz": 162550000,
-  "modulation": "nfm",
-  "encrypted": false,
-  "favorite": true
-}
-```
-
-## Troubleshooting
-
-### Zadig / WinUSB
-
-If `rtl_test.exe` says no supported devices found, the RTL-SDR probably still has the wrong driver. Reopen Zadig as Administrator, enable `List All Devices`, choose the RTL-SDR bulk interface, and install `WinUSB`.
-
-### Device Not Found
-
-Check:
+Desktop shell:
 
 ```powershell
-C:\rtl-sdr\rtl_test.exe -t
+cd "c:\Users\mimho\Documents\GitHub\Scanner SDR\SDRTrunk\tricore-scanner\frontend"
+npm run desktop
 ```
 
-Close SDR#, SDRTrunk, or any other app using the dongle. Only one program can usually use the RTL-SDR at a time.
-
-### Python Dependency Problems
-
-If `pip install -r requirements.txt` fails, upgrade pip first:
+Backend tests:
 
 ```powershell
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+cd "c:\Users\mimho\Documents\GitHub\Scanner SDR\SDRTrunk\tricore-scanner"
+backend\.venv\Scripts\python.exe -m pytest backend\tests\test_scanner_api.py
 ```
 
-If `pyrtlsdr` imports but cannot find RTL-SDR DLLs, put the RTL-SDR DLL files in `C:\rtl-sdr` and add that folder to PATH before starting PowerShell.
-
-### Weak Signals or Scanner Never Stops
-
-Try gain values from the dashboard or API:
+Frontend production build:
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/scanner/gain -ContentType "application/json" -Body '{"gain_db":36.4}'
+cd "c:\Users\mimho\Documents\GitHub\Scanner SDR\SDRTrunk\tricore-scanner\frontend"
+npm run build
 ```
 
-Also adjust `signal_threshold` in `backend/scanner_controller.py`. A lower threshold stops more often; a higher threshold ignores weak activity.
+## Current Limitations
 
-## User-Friendly Label Mapping
+- analog decoder modules remain placeholders behind the decoder abstraction
+- full P25 trunking is not part of this scanner-foundation pass
+- logging is not the current focus
+- Smart Import is not part of this phase
+- transcription is not part of this phase
+- encrypted or unavailable channels must remain skipped
+- tests do not require real RTL-SDR hardware
 
-| Technical Term | TriCore Label |
-| --- | --- |
-| Talkgroup | Channel |
-| TGID | Channel ID |
-| Lockout | Hide Channel |
-| Encryption | Unavailable |
-| Control Channel | System Signal |
-| Trunked System | Radio System |
-| Hold | Stay Here |
+## Mission Direction
 
-## Smart Import Direction
+TriCore is being stabilized as one clean scanner application with banks, service types, scanner controls, Demo mode, real RTL-SDR support behind the receiver abstraction, and clear status for receiver mode, state, signal, squelch, gain, and channel selection.
 
-TriCore should not scrape RadioReference pages. Later Smart Import should use the official RadioReference Web Service with the user's own login, CSV import, or manual entry. Raw imported data stays separate from cleaned scanner-ready tables.
-
-## Trunking Direction
-
-Do not implement trunking decoding from scratch in Phase 1. Windows can reference SDRTrunk behavior later. Linux or Raspberry Pi nodes can eventually run OP25 or other lawful decoders while the Windows app remains the clean UI.
-
-## Next Steps
-
-- Replace demo frequencies with lawful local conventional frequencies.
-- Confirm `rtl_test.exe -t` works.
-- Run backend and frontend.
-- Try gain values: auto, `19.7`, `28`, `36.4`, `49.6`.
-- Tune the signal threshold for your local RF environment.
-- Add SQLite logging using `sql/sql_create_scanner_tables.sql`.
-- Add WebSocket status updates.
-- Add Smart Import CSV preview.
-- Design SDRTrunk/Linux backend integration after the conventional scanner proof works.
+The current pass is scanner foundation cleanup and stabilization only.

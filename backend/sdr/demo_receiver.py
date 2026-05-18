@@ -46,6 +46,8 @@ class DemoReceiver(BaseReceiver):
             label="Demo",
             simulated=True,
             available=True,
+            demo_available=True,
+            rtl_sdr_available=False,
             tuned_frequency_hz=self.frequency_hz,
             gain_db=self.gain_db,
             squelch_db=self.squelch_db,

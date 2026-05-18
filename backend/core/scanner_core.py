@@ -68,7 +68,11 @@ class ScannerCore:
     def receiver_status(self) -> ReceiverStatus:
         status = self.receiver.status()
         if self.error_message and status.simulated:
-            return status.model_copy(update={"error_message": self.error_message, "message": self.error_message})
+            return status.model_copy(update={
+                "error_message": self.error_message,
+                "message": self.error_message,
+                "last_rtl_error": self.error_message,
+            })
         return status
 
     def start(self) -> ScannerStatus:

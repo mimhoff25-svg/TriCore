@@ -7,10 +7,11 @@ function formatMHz(frequencyHz) {
 }
 
 function scannerState(status) {
-  if (status?.is_paused) return "Paused";
-  if (status?.is_holding ?? status?.held) return "Holding";
-  if (status?.is_scanning) return "Scanning";
-  return "Stopped";
+  return status?.scanner_state || "Stopped";
+}
+
+function titleCase(value) {
+  return String(value || "--").replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 export default function NowListeningCard({ status }) {
@@ -21,6 +22,11 @@ export default function NowListeningCard({ status }) {
   const unavailable = Boolean(channel?.unavailable || channel?.encrypted);
   const state = scannerState(status);
   const meter = Math.max(0, Math.min(100, (signalLevel + 110) * 1.6));
+  const gainText = status?.gain_db == null ? "Auto" : `${Number(status.gain_db).toFixed(1)} dB`;
+  const currentBank = channel?.bank_name || titleCase(channel?.bank_id);
+  const currentService = titleCase(channel?.service_type);
+  const modulation = String(channel?.modulation || "--").toUpperCase();
+  const mutedText = status?.is_muted ? "Muted" : "Live";
 
   return (
     <section className="rounded-xl border border-white/10 bg-[#0b141e] p-4 shadow-[0_20px_80px_rgba(0,0,0,0.32)]">
@@ -49,6 +55,16 @@ export default function NowListeningCard({ status }) {
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Bank</div>
+          <div className="mt-2 text-xl font-semibold text-white">{currentBank}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Service</div>
+          <div className="mt-2 text-xl font-semibold text-white">{currentService}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Frequency</div>
           <div className="mt-2 font-mono text-xl font-semibold text-white">{formatMHz(frequencyHz)}</div>
         </div>
@@ -62,6 +78,16 @@ export default function NowListeningCard({ status }) {
         </div>
 
         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Channel</div>
+          <div className="mt-2 text-xl font-semibold text-white">{channel?.name || "--"}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Modulation</div>
+          <div className="mt-2 text-xl font-semibold text-white">{modulation}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Receiver</div>
           <div className="mt-2 flex items-center gap-2 text-xl font-semibold text-white">
             <Radio className="h-5 w-5 text-triCoreBlue" />
@@ -72,6 +98,21 @@ export default function NowListeningCard({ status }) {
         <div className="rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">State</div>
           <div className="mt-2 text-xl font-semibold text-white">{state}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Squelch</div>
+          <div className="mt-2 text-xl font-semibold text-white">{Number(status?.squelch_db ?? -65).toFixed(0)} dB</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Gain</div>
+          <div className="mt-2 text-xl font-semibold text-white">{gainText}</div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Audio</div>
+          <div className="mt-2 text-xl font-semibold text-white">{mutedText}</div>
         </div>
       </div>
 

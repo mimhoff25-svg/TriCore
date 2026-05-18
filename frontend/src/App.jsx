@@ -184,6 +184,8 @@ function App() {
             channels={channels}
             banks={banks}
             activeChannel={activeChannel}
+            status={status}
+            receiver={receiver}
             onTune={tuneChannel}
           />
         </section>
@@ -207,6 +209,7 @@ function App() {
           />
           <ReceiverPanel
             receiver={receiver}
+            status={status}
             gain={gain}
             squelch={squelch}
             onMode={changeReceiverMode}

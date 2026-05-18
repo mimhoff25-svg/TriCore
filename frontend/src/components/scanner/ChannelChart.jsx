@@ -4,13 +4,23 @@ function formatMHz(frequencyHz) {
   return (parsed / 1_000_000).toFixed(4);
 }
 
-function channelStatus(channel) {
-  if (channel.unavailable || channel.encrypted) return "Unavailable";
-  if (channel.locked_out) return "Hidden";
-  return "Ready";
+function formatService(value) {
+  return String(value || "--").replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
-export default function ChannelChart({ channels = [], banks = [], activeChannel, onTune }) {
+function channelStatus(channel, activeChannel, status, receiver) {
+  if (channel.unavailable || channel.encrypted) return "Unavailable";
+  if (channel.locked_out) return "Hidden";
+  if (activeChannel?.id === channel.id) {
+    if (status?.is_holding) return "Holding";
+    if (status?.is_scanning || status?.state === "searching") return "Scanning";
+  }
+  if (status?.simulated) return "Demo";
+  if (receiver?.rtl_sdr_available || receiver?.available) return "RTL-SDR";
+  return "Available";
+}
+
+export default function ChannelChart({ channels = [], banks = [], activeChannel, status, receiver, onTune }) {
   const bankNames = new Map(banks.map((bank) => [bank.id, bank.name]));
 
   return (
@@ -38,7 +48,8 @@ export default function ChannelChart({ channels = [], banks = [], activeChannel,
           <tbody>
             {channels.map((channel) => {
               const active = activeChannel?.id === channel.id;
-              const status = channelStatus(channel);
+              const channelState = channelStatus(channel, activeChannel, status, receiver);
+              const signal = active ? Number(status?.signal_level ?? -100).toFixed(1) : "--";
               return (
                 <tr
                   key={channel.id}
@@ -46,14 +57,14 @@ export default function ChannelChart({ channels = [], banks = [], activeChannel,
                   className={`cursor-pointer border-t border-white/5 hover:bg-white/5 ${active ? "bg-triCoreGreen/10" : ""}`}
                 >
                   <td className="px-3 py-2 text-slate-300">{bankNames.get(channel.bank_id) || channel.bank_id}</td>
-                  <td className="px-3 py-2 text-slate-400">{channel.service_type}</td>
+                  <td className="px-3 py-2 text-slate-400">{formatService(channel.service_type)}</td>
                   <td className="px-3 py-2 font-semibold text-white">{channel.name}</td>
                   <td className="px-3 py-2 font-mono text-slate-200">{formatMHz(channel.frequency_hz)} MHz</td>
                   <td className="px-3 py-2 uppercase text-slate-400">{channel.modulation}</td>
-                  <td className="px-3 py-2 font-mono text-slate-400">{Number(channel.signal_level ?? -100).toFixed(1)} dB</td>
-                  <td className="px-3 py-2 text-slate-400">{channel.priority ? "Priority" : ""}</td>
-                  <td className={`px-3 py-2 font-semibold ${status === "Ready" ? "text-triCoreGreen" : status === "Hidden" ? "text-triCoreAmber" : "text-red-300"}`}>
-                    {status}
+                  <td className="px-3 py-2 font-mono text-slate-400">{signal === "--" ? signal : `${signal} dB`}</td>
+                  <td className="px-3 py-2 text-slate-400">{channel.priority ? "Yes" : "No"}</td>
+                  <td className={`px-3 py-2 font-semibold ${channelState === "Unavailable" ? "text-red-300" : channelState === "Hidden" ? "text-triCoreAmber" : channelState === "Holding" ? "text-triCoreAmber" : channelState === "Scanning" ? "text-triCoreGreen" : "text-slate-200"}`}>
+                    {channelState}
                   </td>
                 </tr>
               );

@@ -73,12 +73,15 @@ class ReceiverStatus(BaseModel):
     label: str = "Demo"
     simulated: bool = True
     available: bool = True
+    demo_available: bool = True
+    rtl_sdr_available: bool = False
     tuned_frequency_hz: Optional[int] = None
     gain_db: Optional[float] = None
     squelch_db: float = -65.0
     signal_level: float = -100.0
     message: str = "Demo receiver ready."
     error_message: Optional[str] = None
+    last_rtl_error: Optional[str] = None
 
 
 class ScannerSettings(BaseModel):

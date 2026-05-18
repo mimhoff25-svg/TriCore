@@ -2,6 +2,7 @@ import { Radio, SlidersHorizontal } from "lucide-react";
 
 export default function ReceiverPanel({
   receiver,
+  status,
   gain,
   squelch,
   onMode,
@@ -9,12 +10,37 @@ export default function ReceiverPanel({
   onSquelch,
 }) {
   const simulated = Boolean(receiver?.simulated);
+  const frequencyText = Number.isFinite(Number(receiver?.tuned_frequency_hz)) && Number(receiver?.tuned_frequency_hz) > 0
+    ? `${(Number(receiver.tuned_frequency_hz) / 1_000_000).toFixed(4)} MHz`
+    : "--.---- MHz";
+  const effectiveGain = gain === "auto" ? "Auto" : `${Number(gain).toFixed(1)} dB`;
+  const signalText = `${Number(receiver?.signal_level ?? status?.signal_level ?? -100).toFixed(1)} dB`;
+  const lastRtlError = receiver?.last_rtl_error || receiver?.error_message || "None";
+  const rows = [
+    ["Receiver Mode", receiver?.label || status?.receiver_mode || "Demo"],
+    ["Demo Receiver", receiver?.demo_available === false ? "Unavailable" : "Available"],
+    ["RTL-SDR", receiver?.rtl_sdr_available ? "Available" : "Unavailable"],
+    ["Tuned Frequency", frequencyText],
+    ["Gain", effectiveGain],
+    ["Squelch", `${Number(squelch).toFixed(0)} dB`],
+    ["Signal Level", signalText],
+    ["Last RTL-SDR Error", lastRtlError],
+  ];
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101720] p-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">
         <SlidersHorizontal className="h-4 w-4 text-triCoreAmber" />
-        Receiver
+        Receiver / Hardware Check
+      </div>
+
+      <div className="mb-4 grid gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</div>
+            <div className="min-w-0 break-words font-semibold text-slate-200">{value}</div>
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
