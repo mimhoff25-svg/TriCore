@@ -2,22 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
   min-height: 100%;
 }
 
+html {
+  background: #071019;
+}
+
 body {
   margin: 0;
   background:
-    linear-gradient(180deg, rgba(18, 24, 34, 0.96), rgba(8, 12, 18, 1)),
-    #090d13;
+    radial-gradient(circle at top left, rgba(111, 183, 255, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(255, 209, 102, 0.12), transparent 26%),
+    radial-gradient(circle at bottom center, rgba(101, 240, 160, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(8, 14, 21, 0.98), rgba(6, 10, 16, 1));
   color: #f5f7fb;
-  font-family: Inter, Segoe UI, Arial, sans-serif;
+  font-family: Bahnschrift, "Trebuchet MS", "Segoe UI Variable Display", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 120px 120px;
+  mask-image: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent 72%);
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
+}
+
+::selection {
+  background: rgba(111, 183, 255, 0.35);
+  color: #f8fbff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(111, 183, 255, 0.4) rgba(255, 255, 255, 0.06);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(111, 183, 255, 0.35);
+  border-radius: 999px;
 }

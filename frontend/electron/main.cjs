@@ -9,6 +9,7 @@ const PROJECT_ROOT = path.resolve(FRONTEND_ROOT, "..");
 const BACKEND_ROOT = path.join(PROJECT_ROOT, "backend");
 const BACKEND_URL = "http://127.0.0.1:8000";
 const DASHBOARD_URL = "http://127.0.0.1:5173";
+const APP_ICON_PATH = path.join(FRONTEND_ROOT, "public", "icons", "tricore.ico");
 const isDev = process.argv.includes("--dev") || process.env.TRICORE_DESKTOP_DEV === "1";
 const isTest = process.env.TRICORE_TEST === "1";
 const RTLSDR_DLL_DIRS = [
@@ -30,6 +31,49 @@ const LOG_DIR = path.join(PROJECT_ROOT, "logs");
 const BACKEND_STDOUT_LOG = path.join(LOG_DIR, "backend.out.log");
 const BACKEND_STDERR_LOG = path.join(LOG_DIR, "backend.err.log");
 const ELECTRON_LOG = path.join(LOG_DIR, "electron.log");
+
+const LOCAL_ELECTRON_DATA = path.join(PROJECT_ROOT, ".electron-data");
+const LOCAL_USER_DATA = path.join(LOCAL_ELECTRON_DATA, "user-data");
+const INSTANCE_ID = String(process.pid);
+const LOCAL_CACHE_DATA = path.join(LOCAL_ELECTRON_DATA, "cache", INSTANCE_ID);
+const LOCAL_SESSION_DATA = path.join(LOCAL_ELECTRON_DATA, "session", INSTANCE_ID);
+const LOCAL_GPU_CACHE = path.join(LOCAL_CACHE_DATA, "gpu");
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+
+// Keep Electron runtime data inside the project workspace to avoid
+// machine-specific profile permission issues that can crash the face UI.
+for (const dir of [LOCAL_ELECTRON_DATA, LOCAL_USER_DATA, LOCAL_CACHE_DATA, LOCAL_SESSION_DATA, LOCAL_GPU_CACHE]) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Fall back to Electron defaults when local data paths cannot be set.
+  }
+}
+
+try {
+  app.setPath("userData", LOCAL_USER_DATA);
+} catch {
+  // Fall back to Electron defaults when this path key is unavailable.
+}
+try {
+  app.setPath("cache", LOCAL_CACHE_DATA);
+} catch {
+  // Fall back to Electron defaults when this path key is unavailable.
+}
+try {
+  app.setPath("sessionData", LOCAL_SESSION_DATA);
+} catch {
+  // Electron builds that do not expose sessionData will use defaults.
+}
+
+app.commandLine.appendSwitch("disk-cache-dir", LOCAL_CACHE_DATA);
+app.commandLine.appendSwitch("gpu-disk-cache-dir", LOCAL_GPU_CACHE);
+app.commandLine.appendSwitch("media-cache-size", "0");
 
 function appendLog(file, message) {
   try {
@@ -54,6 +98,16 @@ function backendEnvironment() {
   return env;
 }
 
+function backendPythonCommand() {
+  const venvPython = path.join(BACKEND_ROOT, ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(venvPython)) {
+    return { command: venvPython, args: ["-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8000"] };
+  }
+
+  // Fallback to launcher-based discovery for systems where venv was moved.
+  return { command: "py", args: ["-3", "-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8000"] };
+}
+
 function waitForBackend(timeoutMs = 12000) {
   const started = Date.now();
 
@@ -61,7 +115,7 @@ function waitForBackend(timeoutMs = 12000) {
     function check() {
       const request = http.get(`${BACKEND_URL}/api/status`, (response) => {
         response.resume();
-        if (response.statusCode && response.statusCode < 500) {
+        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
           resolve();
         } else {
           retry();
@@ -91,7 +145,7 @@ function isBackendAlive() {
   return new Promise((resolve) => {
     const request = http.get(`${BACKEND_URL}/api/status`, (response) => {
       response.resume();
-      resolve(Boolean(response.statusCode && response.statusCode < 500));
+      resolve(Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 300));
     });
     request.on("error", () => resolve(false));
     request.setTimeout(800, () => {
@@ -107,22 +161,22 @@ async function startBackend() {
     return;
   }
 
-  const pythonExe = path.join(BACKEND_ROOT, ".venv", "Scripts", "python.exe");
+  const pythonCommand = backendPythonCommand();
   fs.mkdirSync(LOG_DIR, { recursive: true });
   const out = fs.openSync(BACKEND_STDOUT_LOG, "a");
   const err = fs.openSync(BACKEND_STDERR_LOG, "a");
 
   backendProcess = spawn(
-    pythonExe,
-    ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8000"],
+    pythonCommand.command,
+    pythonCommand.args,
     {
-      cwd: BACKEND_ROOT,
+      cwd: PROJECT_ROOT,
       env: backendEnvironment(),
       windowsHide: true,
       stdio: isTest ? "pipe" : ["ignore", out, err],
     },
   );
-  appendLog(ELECTRON_LOG, `Started backend pid=${backendProcess.pid}.`);
+  appendLog(ELECTRON_LOG, `Started backend pid=${backendProcess.pid} using ${pythonCommand.command}.`);
 
   backendProcess.on("error", (error) => {
     appendLog(ELECTRON_LOG, `Backend spawn error: ${error.message}`);
@@ -135,6 +189,8 @@ async function startBackend() {
 }
 
 function createMainWindow() {
+  const iconPath = fs.existsSync(APP_ICON_PATH) ? APP_ICON_PATH : undefined;
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -142,15 +198,23 @@ function createMainWindow() {
     minHeight: isTest ? 640 : 720,
     backgroundColor: "#090d13",
     title: "TriCore Scanner",
+    icon: iconPath,
     autoHideMenuBar: true,
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, webSecurity: true },
   });
 
   Menu.setApplicationMenu(null);
 
+  mainWindow.webContents.on("console-message", (_e, level, msg, line, src) => {
+    appendLog(ELECTRON_LOG, `[renderer L${level}] ${msg} (${src}:${line})`);
+  });
+
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
+    if (isDev || isTest) {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    }
   });
 
   if (isDev) {
@@ -184,6 +248,10 @@ function createMainWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.tricore.scanner");
+  }
+
   await startBackend();
   try {
     await waitForBackend();
@@ -195,6 +263,15 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+});
+
+app.on("second-instance", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+  }
 });
 
 process.on("uncaughtException", (error) => {

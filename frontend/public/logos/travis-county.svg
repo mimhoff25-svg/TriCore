@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Travis County">
+  <rect width="128" height="128" rx="24" fill="#0f1720"/>
+  <rect x="10" y="10" width="108" height="108" rx="20" fill="#1d4ed8" opacity="0.22"/>
+  <path d="M64 22 92 38v30c0 20-12 31-28 38C48 99 36 88 36 68V38z" fill="#93c5fd"/>
+  <text x="64" y="120" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#bfdbfe">TRAVIS CO</text>
+</svg>

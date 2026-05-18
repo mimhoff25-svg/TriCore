@@ -20,6 +20,12 @@ logs/
 *.raw
 *.err
 np.json
+runtime/
+.electron-data/
+*.wav
+*.srt
+*.packetData
+*.packetData2
 
 # Local SDR/runtime binaries copied into the app
 tools/tricore-sdr/

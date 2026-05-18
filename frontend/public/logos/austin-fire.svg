@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Austin Fire">
+  <rect width="128" height="128" rx="24" fill="#1f1414"/>
+  <rect x="10" y="10" width="108" height="108" rx="20" fill="#dc2626" opacity="0.22"/>
+  <path d="M64 26c7 11 13 18 13 29 0 9-6 17-13 17s-13-8-13-17c0-8 4-14 13-29Z" fill="#fecaca"/>
+  <circle cx="64" cy="78" r="16" fill="#fca5a5"/>
+  <text x="64" y="120" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#fecaca">AUSTIN FIRE</text>
+</svg>

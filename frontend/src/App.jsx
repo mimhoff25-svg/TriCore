@@ -1,14 +1,74 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import ChannelEditor from "./components/ChannelEditor";
 import NowListeningCard from "./components/NowListeningCard";
-import RecentCallTicker from "./components/RecentCallTicker";
-import ScannerControls from "./components/ScannerControls";
+import RadioLog from "./components/RadioLog";
 import SystemList from "./components/SystemList";
-import TopBar from "./components/TopBar";
 
 const API_BASE = "http://127.0.0.1:8000";
+const DISPATCH_WATCHES = [
+  { id: "tcso-david", label: "TCSO DAVID", needles: ["tcso david"] },
+  { id: "tcso", label: "TCSO Traffic", needles: ["tcso"], activeOnly: true },
+  { id: "fire-dispatch", label: "Fire Dispatch", needles: ["fire dispatch"] },
+  { id: "ems-dispatch", label: "EMS Dispatch", needles: ["ems dispatch"] },
+];
+
+function findDispatchAlert(displayStatus, p25) {
+  const channel = displayStatus?.active_channel;
+  const candidates = [
+    channel?.id,
+    channel?.name,
+    channel?.system,
+    channel?.department,
+    p25?.selected_talkgroup?.id,
+    p25?.selected_talkgroup?.alpha_tag,
+    p25?.selected_talkgroup?.description,
+    p25?.selected_talkgroup?.tag,
+    p25?.active_call?.talkgroup?.id,
+    p25?.active_call?.talkgroup?.alpha_tag,
+    p25?.active_call?.talkgroup?.description,
+    p25?.active_call?.talkgroup?.tag,
+    p25?.last_event?.raw,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  const activeCandidates = [
+    channel?.id,
+    channel?.name,
+    channel?.system,
+    channel?.department,
+    p25?.active_call?.talkgroup?.id,
+    p25?.active_call?.talkgroup?.alpha_tag,
+    p25?.active_call?.talkgroup?.description,
+    p25?.active_call?.talkgroup?.tag,
+    p25?.last_event?.raw,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  const match = DISPATCH_WATCHES.find((watch) => {
+    const haystack = watch.activeOnly ? activeCandidates : candidates;
+    return watch.needles.some((needle) => haystack.some((candidate) => candidate.includes(needle)));
+  });
+  if (!match) return null;
+
+  const source = channel?.name
+    || p25?.active_call?.talkgroup?.alpha_tag
+    || p25?.selected_talkgroup?.alpha_tag
+    || match.label;
+
+  return {
+    id: match.id,
+    label: match.label,
+    source,
+    detail: channel?.system
+      || p25?.selected_talkgroup?.tag
+      || p25?.active_call?.talkgroup?.tag
+      || "TriCore live match",
+    key: `${match.id}:${channel?.id || p25?.selected_talkgroup?.id || p25?.active_call?.talkgroup?.id || source}`,
+  };
+}
 
 async function api(path, method = "GET", body = undefined) {
   const opts = { method, headers: {} };
@@ -38,8 +98,113 @@ function App() {
   const [fmPlayer, setFmPlayer]       = useState(null);
   const [p25, setP25]                 = useState(null);
   const [sdrRuntime, setSdrRuntime]   = useState(null);
+  const [sdrSystem, setSdrSystem]     = useState(null);
   const [activePlaylist, setActivePlaylist] = useState(null);
   const [showAddChannel, setShowAddChannel] = useState(false);
+  const [talkgroupRefreshKey, setTalkgroupRefreshKey] = useState(0);
+  const [playlistSyncing, setPlaylistSyncing] = useState(false);
+  const [playlistSyncInfo, setPlaylistSyncInfo] = useState("");
+  const [dispatchAlert, setDispatchAlert] = useState(null);
+  const [transcripts, setTranscripts] = useState([]);
+  const [transcriptStatus, setTranscriptStatus] = useState({ running: false });
+  const modeSwitchSeq = useRef(0);
+  const decoderInitStarted = useRef(false);
+  const lastDispatchAlertKey = useRef("");
+
+  function beginModeSwitch() {
+    modeSwitchSeq.current += 1;
+    return modeSwitchSeq.current;
+  }
+
+  function isLatestModeSwitch(seq) {
+    return seq === modeSwitchSeq.current;
+  }
+
+  function inferTalkgroupDecimal(channel) {
+    const raw = channel?.talkgroup_decimal ?? channel?.tgid ?? channel?.decimal;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function isP25Channel(channel) {
+    if (!channel) return false;
+    const modulation = String(channel.modulation || "").toLowerCase();
+    const category = String(channel.category || "").toLowerCase();
+    const system = String(channel.system || "").toLowerCase();
+    const serviceType = String(channel.service_type || "").toLowerCase();
+    return modulation === "p25"
+      || category.includes("trunk")
+      || system.includes("gatrrs")
+      || serviceType === "p25"
+      || inferTalkgroupDecimal(channel) !== null;
+  }
+
+  function isFmChannel(channel) {
+    const modulation = String(channel?.modulation || "").toLowerCase();
+    const category = String(channel?.category || "").toLowerCase();
+    const serviceType = String(channel?.service_type || "").toLowerCase();
+    return serviceType === "fm_radio" || category === "fm_radio" || modulation === "wfm";
+  }
+
+  function isAmOrSwChannel(channel) {
+    const modulation = String(channel?.modulation || "").toLowerCase();
+    const category = String(channel?.category || "").toLowerCase();
+    const serviceType = String(channel?.service_type || "").toLowerCase();
+    const name = String(channel?.name || "").toLowerCase();
+    const isAm = serviceType === "am_radio" || category === "am_radio" || modulation === "am";
+    const isSw = serviceType === "shortwave" || category === "shortwave" || category === "sw" || modulation === "usb" || modulation === "lsb" || name.includes("shortwave");
+    return isAm || isSw;
+  }
+
+  function isBroadcastLikeChannel(channel) {
+    return isFmChannel(channel) || isAmOrSwChannel(channel);
+  }
+
+  async function stopFmIfPlaying() {
+    try {
+      const player = await api("/api/fm/stop", "POST");
+      setFmPlayer(player);
+    } catch {
+      // Keep mode switching resilient if FM stop endpoint is unavailable.
+    }
+  }
+
+  async function stopP25IfRunning() {
+    try {
+      setP25(await api("/api/p25/stop", "POST"));
+    } catch {
+      // Decoder may already be stopped.
+    }
+  }
+
+  async function prepareBuiltInDecoder() {
+    if (!sdrRuntime?.ready) {
+      await syncSdrRuntime();
+    }
+    if (talkgroupRefreshKey === 0) {
+      await syncP25Playlist();
+    }
+    return await api("/api/p25/start", "POST");
+  }
+
+  async function activateTalkgroup(talkgroup, playlistName = null, playlistId = null) {
+    const seq = beginModeSwitch();
+    try {
+      await stopFmIfPlaying().catch(() => null);
+      await api("/api/scanner/stop", "POST").catch(() => null);
+      const started = await prepareBuiltInDecoder();
+      if (!isLatestModeSwitch(seq)) return;
+      setP25(started);
+      const selected = await api("/api/p25/select-talkgroup", "POST", { decimal: talkgroup.decimal });
+      if (!isLatestModeSwitch(seq)) return;
+      setActivePlaylist({ id: playlistId || `tg-${talkgroup.decimal}`, name: playlistName || talkgroup.alpha_tag });
+      setP25(selected);
+      refreshStatus().catch(() => null);
+    } catch (error) {
+      if (!isLatestModeSwitch(seq)) return;
+      setP25((current) => ({ ...current, message: error.message || "Talkgroup select failed" }));
+    }
+  }
 
   async function refreshStatus() {
     const s = await api("/api/status");
@@ -60,6 +225,10 @@ function App() {
     setSdrRuntime(await api("/api/sdr/runtime/status"));
   }
 
+  async function refreshSdrSystem() {
+    setSdrSystem(await api("/api/sdr/system"));
+  }
+
   async function refreshChannels() {
     const ch = await api("/api/channels");
     setChannels(ch);
@@ -78,11 +247,16 @@ function App() {
   // ── Scanner lifecycle ──────────────────────────────────────────────────────
 
   async function startScanner() {
+    const seq = beginModeSwitch();
     setActivePlaylist(null);
     setDisabledSystems(new Set());
+    await stopFmIfPlaying().catch(() => null);
+    await stopP25IfRunning().catch(() => null);
     await api("/api/scanner/channel-filter", "POST", { channel_ids: null });
     await api("/api/scanner/group-filter", "POST", { systems: null });
-    setStatus(await api("/api/scanner/start", "POST"));
+    const nextStatus = await api("/api/scanner/start", "POST");
+    if (!isLatestModeSwitch(seq)) return;
+    setStatus(nextStatus);
   }
 
   async function stopScanner() {
@@ -90,7 +264,13 @@ function App() {
   }
 
   async function scanSystem(systemName) {
+    const seq = beginModeSwitch();
     const systemChannels = channels.filter((channel) => channel.system === systemName);
+    if (systemChannels.length && systemChannels.every((channel) => isBroadcastLikeChannel(channel))) {
+      await tuneToChannel(systemChannels[0]);
+      setActivePlaylist({ id: `system-${systemName}`, name: systemName });
+      return;
+    }
     if (systemChannels.length && systemChannels.every((channel) => channel.service_type === "railroad" || channel.category === "railroad")) {
       await tuneToChannel(systemChannels[0]);
       setActivePlaylist({ id: `system-${systemName}`, name: systemName });
@@ -100,21 +280,37 @@ function App() {
     const nextDisabled = new Set(allNames.filter((name) => name !== systemName));
     setDisabledSystems(nextDisabled);
     setActivePlaylist({ id: `system-${systemName}`, name: systemName });
+    await stopFmIfPlaying().catch(() => null);
+    await stopP25IfRunning().catch(() => null);
     await api("/api/scanner/channel-filter", "POST", { channel_ids: null });
     await api("/api/scanner/group-filter", "POST", { systems: [systemName] });
-    setStatus(await api("/api/scanner/start", "POST"));
+    const nextStatus = await api("/api/scanner/start", "POST");
+    if (!isLatestModeSwitch(seq)) return;
+    setStatus(nextStatus);
   }
 
   async function scanAllSystems() {
+    const seq = beginModeSwitch();
     setDisabledSystems(new Set());
     setActivePlaylist(null);
+    await stopFmIfPlaying().catch(() => null);
+    await stopP25IfRunning().catch(() => null);
     await api("/api/scanner/channel-filter", "POST", { channel_ids: null });
     await api("/api/scanner/group-filter", "POST", { systems: null });
-    setStatus(await api("/api/scanner/start", "POST"));
+    const nextStatus = await api("/api/scanner/start", "POST");
+    if (!isLatestModeSwitch(seq)) return;
+    setStatus(nextStatus);
   }
 
   async function scanPlaylist(playlist) {
+    const seq = beginModeSwitch();
     const playlistChannels = channels.filter((channel) => playlist.channelIds.includes(channel.id));
+    const directTuneIds = new Set(["broadcast-fm", "broadcast-am", "shortwave", "mode-fm", "mode-am", "mode-sw"]);
+    if (playlistChannels.length && (directTuneIds.has(playlist.id) || playlistChannels.every((channel) => isBroadcastLikeChannel(channel)))) {
+      await tuneToChannel(playlistChannels[0]);
+      setActivePlaylist({ id: playlist.id, name: playlist.name });
+      return;
+    }
     if (playlist.id === "railroad" && playlistChannels.length) {
       await tuneToChannel(playlistChannels[0]);
       setActivePlaylist({ id: playlist.id, name: playlist.name });
@@ -124,9 +320,13 @@ function App() {
     const enabled = new Set(playlist.systemNames || []);
     setDisabledSystems(new Set(allNames.filter((name) => !enabled.has(name))));
     setActivePlaylist({ id: playlist.id, name: playlist.name });
+    await stopFmIfPlaying().catch(() => null);
+    await stopP25IfRunning().catch(() => null);
     await api("/api/scanner/group-filter", "POST", { systems: null });
     await api("/api/scanner/channel-filter", "POST", { channel_ids: playlist.channelIds });
-    setStatus(await api("/api/scanner/start", "POST"));
+    const nextStatus = await api("/api/scanner/start", "POST");
+    if (!isLatestModeSwitch(seq)) return;
+    setStatus(nextStatus);
   }
 
   // ── Scanner controls ───────────────────────────────────────────────────────
@@ -166,18 +366,59 @@ function App() {
     });
   }
 
+  async function holdCurrentChannelOrFallback(fallbackStatus) {
+    try {
+      return await api("/api/scanner/hold", "POST");
+    } catch {
+      return fallbackStatus;
+    }
+  }
+
   // ── Individual channel tune ────────────────────────────────────────────────
 
   async function tuneToChannel(channel) {
+    const seq = beginModeSwitch();
     try {
-      if (channel.service_type === "fm_radio") {
+      if (isP25Channel(channel)) {
+        const decimal = inferTalkgroupDecimal(channel);
+        if (decimal == null) {
+          setStatus((current) => ({ ...current, message: "P25 channel is missing a talkgroup decimal." }));
+          return;
+        }
+        await activateTalkgroup({
+          decimal,
+          alpha_tag: channel.name || `Talkgroup ${decimal}`,
+        }, channel.name || channel.system || "P25 Talkgroup");
+        return;
+      }
+
+      if (isFmChannel(channel)) {
+        await api("/api/scanner/stop", "POST").catch(() => null);
+        await stopP25IfRunning().catch(() => null);
         const player = await api("/api/fm/play", "POST", { channel_id: channel.id });
+        if (!isLatestModeSwitch(seq)) return;
         setFmPlayer(player);
         setStatus(await api("/api/status"));
+      } else if (isAmOrSwChannel(channel)) {
+        await stopFmIfPlaying().catch(() => null);
+        await stopP25IfRunning().catch(() => null);
+        const nextStatus = await api("/api/scanner/tune", "POST", { channel_id: channel.id });
+        const heldStatus = await holdCurrentChannelOrFallback(nextStatus);
+        if (!isLatestModeSwitch(seq)) return;
+        setStatus({
+          ...heldStatus,
+          message: `${channel.name} locked.`,
+        });
       } else {
-        setStatus(await api("/api/scanner/tune", "POST", { channel_id: channel.id }));
+        await stopFmIfPlaying().catch(() => null);
+        await stopP25IfRunning().catch(() => null);
+        const nextStatus = await api("/api/scanner/tune", "POST", { channel_id: channel.id });
+        const heldStatus = await holdCurrentChannelOrFallback(nextStatus);
+        if (!isLatestModeSwitch(seq)) return;
+        setStatus(heldStatus);
       }
     } catch (error) {
+      if (!isLatestModeSwitch(seq)) return;
       setStatus((current) => ({ ...current, message: error.message || "Channel tune failed" }));
     }
   }
@@ -206,19 +447,21 @@ function App() {
 
   async function launchTrunkingDecoder() {
     try {
-      setP25(await api("/api/p25/start", "POST"));
+      setP25(await prepareBuiltInDecoder());
     } catch (error) {
-      setP25((current) => ({ ...current, message: error.message || "SDR backend start failed" }));
+      setP25((current) => ({ ...current, message: error.message || "Built-in decoder start failed" }));
     }
   }
 
   async function selectTalkgroup(talkgroup) {
-    try {
-      setActivePlaylist({ id: `tg-${talkgroup.decimal}`, name: talkgroup.alpha_tag });
-      setP25(await api("/api/p25/select-talkgroup", "POST", { decimal: talkgroup.decimal }));
-    } catch (error) {
-      setP25((current) => ({ ...current, message: error.message || "Talkgroup select failed" }));
-    }
+    await activateTalkgroup(talkgroup);
+  }
+
+  async function scanTalkgroupDepartment(name, list, playlistId = null) {
+    const talkgroups = Array.isArray(list) ? list : [];
+    if (!talkgroups.length) return;
+    const nextTalkgroup = talkgroups.find((tg) => !tg.encrypted) || talkgroups[0];
+    await activateTalkgroup(nextTalkgroup, name, playlistId);
   }
 
   async function stopP25Decoder() {
@@ -232,8 +475,69 @@ function App() {
   async function syncSdrRuntime() {
     try {
       setSdrRuntime(await api("/api/sdr/runtime/sync", "POST"));
+      refreshSdrSystem().catch(() => null);
     } catch (error) {
       setSdrRuntime((current) => ({ ...current, ready: false, message: error.message || "Runtime sync failed" }));
+    }
+  }
+
+  async function syncP25Playlist() {
+    setPlaylistSyncing(true);
+    try {
+      const result = await api("/api/p25/sync-playlist", "POST");
+      setTalkgroupRefreshKey((current) => current + 1);
+      setPlaylistSyncInfo(
+        result.updated
+          ? "Imported trunking playlist into TriCore."
+          : "Trunking playlist already in sync."
+      );
+      refreshP25().catch(() => null);
+    } catch (error) {
+      setPlaylistSyncInfo(error.message || "Playlist sync failed.");
+    } finally {
+      setPlaylistSyncing(false);
+    }
+  }
+
+  async function refreshTranscripts() {
+    const [entries, ts] = await Promise.all([
+      api("/api/transcripts"),
+      api("/api/transcripts/status"),
+    ]);
+    setTranscripts(entries);
+    setTranscriptStatus(ts);
+  }
+
+  async function startTranscription() {
+    const result = await api("/api/transcripts/start", "POST");
+    if (!result.ok) {
+      setTranscriptStatus((current) => ({ ...current, error: result.error }));
+    } else {
+      setTranscriptStatus((current) => ({ ...current, running: true, error: null }));
+    }
+  }
+
+  async function stopTranscription() {
+    await api("/api/transcripts/stop", "POST");
+    setTranscriptStatus((current) => ({ ...current, running: false }));
+  }
+
+  async function clearTranscripts() {
+    await api("/api/transcripts/clear", "POST");
+    setTranscripts([]);
+  }
+
+  async function initializeBuiltInDecoder() {
+    if (decoderInitStarted.current) return;
+    decoderInitStarted.current = true;
+
+    await syncSdrRuntime();
+    await syncP25Playlist();
+
+    try {
+      setP25(await prepareBuiltInDecoder());
+    } catch (error) {
+      setP25((current) => ({ ...current, message: error.message || "Built-in decoder startup failed" }));
     }
   }
 
@@ -257,31 +561,61 @@ function App() {
     refreshChannels().catch(() => null);
     refreshP25().catch(() => null);
     refreshSdrRuntime().catch(() => null);
+    refreshSdrSystem().catch(() => null);
     refreshFmStations().catch(() => null);
     refreshFmPlayer().catch(() => null);
+    refreshTranscripts().catch(() => null);
+    initializeBuiltInDecoder().catch(() => null);
     const statusTimer = setInterval(() => refreshStatus().catch(() => null), 1000);
     const callsTimer  = setInterval(() => refreshCalls().catch(() => null), 5000);
     const p25Timer    = setInterval(() => refreshP25().catch(() => null), 1500);
-    const fmTimer     = setInterval(() => refreshFmPlayer().catch(() => null), 1000);
-    const clockTimer  = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000);
+    const systemTimer = setInterval(() => refreshSdrSystem().catch(() => null), 5000);
+    const fmTimer         = setInterval(() => refreshFmPlayer().catch(() => null), 1000);
+    const transcriptTimer = setInterval(() => refreshTranscripts().catch(() => null), 3000);
+    const clockTimer      = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000);
     return () => {
       clearInterval(statusTimer);
       clearInterval(callsTimer);
       clearInterval(p25Timer);
+      clearInterval(systemTimer);
       clearInterval(fmTimer);
+      clearInterval(transcriptTimer);
       clearInterval(clockTimer);
     };
   }, []);
 
   const scanning = status.state === "SCANNING" || status.state === "RECEIVING_CALL" || status.state === "HOLDING_CHANNEL";
   const activeFmStation = fmPlayer?.station || fmStations.find((station) => station.id === status.active_channel?.id);
-  const p25DisplayChannel = p25?.selected_talkgroup && p25?.running
+  const activeFmFrequencyMhz = Number(activeFmStation?.frequency_mhz);
+  const p25ActiveTalkgroup = p25?.active_call?.talkgroup && typeof p25.active_call.talkgroup === "object"
+    ? p25.active_call.talkgroup
+    : null;
+  const p25EventTalkgroup = p25?.last_event?.talkgroup && typeof p25.last_event.talkgroup === "object"
+    ? p25.last_event.talkgroup
+    : null;
+  const p25TrackingTalkgroup = p25?.selected_talkgroup || null;
+  const p25SelectedTalkgroup = p25ActiveTalkgroup || p25EventTalkgroup || p25TrackingTalkgroup;
+  const p25PrimaryRadioId = p25?.active_call?.source_radio_id
+    || p25?.active_call?.target_radio_id
+    || p25?.last_event?.source_radio_id
+    || p25?.last_event?.target_radio_id
+    || null;
+  const p25TargetRadioId = p25?.active_call?.target_radio_id
+    || p25?.last_event?.target_radio_id
+    || null;
+  const p25DisplayChannel = p25?.running && (p25SelectedTalkgroup || p25?.active_call)
     ? {
-        id: `tg-${p25.selected_talkgroup.decimal}`,
-        name: p25.selected_talkgroup.alpha_tag,
+        id: `tg-${p25SelectedTalkgroup?.decimal || p25.active_call?.talkgroup_decimal || "active"}`,
+        name: p25ActiveTalkgroup?.alpha_tag || p25EventTalkgroup?.alpha_tag || p25?.tracking_label || p25SelectedTalkgroup?.alpha_tag || `TG ${p25.active_call?.talkgroup_decimal || "Active"}`,
         frequency_hz: p25.active_call?.voice_frequency_hz || p25.preferred_control_channel_hz,
         system: "GATRRS",
-        service_type: p25.selected_talkgroup.service_type,
+        department: p25SelectedTalkgroup?.tag || p25SelectedTalkgroup?.description || "Travis County",
+        tracking_label: p25?.tracking_label,
+        tracking_count: p25?.tracked_talkgroup_count,
+        selected_talkgroup: p25TrackingTalkgroup?.alpha_tag,
+        primary_radio_id: p25PrimaryRadioId,
+        target_radio_id: p25TargetRadioId,
+        service_type: p25SelectedTalkgroup?.service_type || "custom",
         modulation: "p25",
         delay_seconds: 0,
       }
@@ -295,12 +629,55 @@ function App() {
         signal_power: status.signal_power ?? 0,
       }
     : status;
+  const matchedDispatch = findDispatchAlert(displayStatus, p25);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (window.Notification.permission === "default") {
+      window.Notification.requestPermission().catch(() => null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!matchedDispatch) return;
+    if (matchedDispatch.key === lastDispatchAlertKey.current) return;
+
+    lastDispatchAlertKey.current = matchedDispatch.key;
+    setDispatchAlert({
+      ...matchedDispatch,
+      heardAt: new Date().toLocaleTimeString(),
+    });
+
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (window.Notification.permission !== "granted") return;
+
+    try {
+      new window.Notification(`TriCore heard ${matchedDispatch.label}`, {
+        body: `${matchedDispatch.source} on ${matchedDispatch.detail}`,
+        silent: false,
+      });
+    } catch {
+      // Ignore notification failures and keep the in-app alert.
+    }
+  }, [matchedDispatch]);
+
+  useEffect(() => {
+    if (!dispatchAlert) return;
+    const timer = setTimeout(() => {
+      setDispatchAlert((current) => (current?.key === dispatchAlert.key ? null : current));
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [dispatchAlert]);
 
   return (
-    <div className="min-h-screen bg-[#090d13] text-white">
-      <TopBar currentTime={time} status={displayStatus} onAddChannel={() => setShowAddChannel(true)} />
+    <div className="min-h-screen bg-[#091119] text-white">
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute left-[-8%] top-[-5%] h-72 w-72 rounded-full bg-triCoreBlue/10 blur-3xl" />
+        <div className="absolute right-[-6%] top-[14%] h-64 w-64 rounded-full bg-triCoreAmber/10 blur-3xl" />
+        <div className="absolute bottom-[-12%] left-[26%] h-80 w-80 rounded-full bg-triCoreGreen/10 blur-3xl" />
+      </div>
 
-      <main className="flex min-h-[calc(100vh-148px)] flex-col lg:flex-row">
+      <main className="flex min-h-screen flex-col lg:flex-row">
         <SystemList
           channels={channels}
           disabledSystems={disabledSystems}
@@ -309,261 +686,36 @@ function App() {
           onScanSystem={scanSystem}
           onScanAllSystems={scanAllSystems}
           onScanPlaylist={scanPlaylist}
+          onScanTalkgroupGroup={scanTalkgroupDepartment}
           onSelectTalkgroup={selectTalkgroup}
           activeChannel={displayStatus.active_channel}
           activePlaylist={activePlaylist}
           selectedTalkgroup={p25?.selected_talkgroup}
+          talkgroupRefreshKey={talkgroupRefreshKey}
         />
 
-        <section className="flex-1 p-5 lg:p-7">
-          {/* Quick-status row */}
-          <div className="mb-5 grid gap-3 md:grid-cols-4">
-            <div className="rounded border border-white/10 bg-white/5 p-4">
-              <div className="text-xs font-semibold uppercase tracking-normal text-slate-500">Scanner State</div>
-              <div className="mt-2 text-xl font-semibold">{displayStatus.state || "NO_SIGNAL"}</div>
-            </div>
-            <div className="rounded border border-white/10 bg-white/5 p-4">
-              <div className="text-xs font-semibold uppercase tracking-normal text-slate-500">Receiver</div>
-              <div className="mt-2 text-xl font-semibold">RTL-SDR</div>
-            </div>
-            <div className="rounded border border-white/10 bg-white/5 p-4">
-              <div className="text-xs font-semibold uppercase tracking-normal text-slate-500">Channels Scanned</div>
-              <div className="mt-2 text-xl font-semibold tabular-nums">{status.channels_scanned ?? 0}</div>
-            </div>
-            <div className="rounded border border-white/10 bg-white/5 p-4">
-              <div className="text-xs font-semibold uppercase tracking-normal text-slate-500">Calls Logged</div>
-              <div className="mt-2 text-xl font-semibold tabular-nums">{calls.length}</div>
-            </div>
-          </div>
-
-          <NowListeningCard status={displayStatus} />
-
-          <div className="mt-5 rounded border border-pink-400/20 bg-[#151e2b] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold">FM Station ID</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  {fmPlayer?.playing && activeFmStation?.now_playing
-                    ? activeFmStation.now_playing
-                    : fmPlayer?.playing && activeFmStation
-                    ? `Playing ${activeFmStation.callsign} - ${activeFmStation.name}`
-                    : activeFmStation
-                    ? `${activeFmStation.callsign} - ${activeFmStation.name}`
-                    : `${fmStations.length} configured Austin FM stations`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="rounded border border-pink-400/20 bg-pink-500/10 px-3 py-2 text-sm font-semibold text-pink-200">
-                  {activeFmStation ? `${activeFmStation.frequency_mhz.toFixed(1)} MHz` : "Station List"}
-                </div>
-                {fmPlayer?.playing && (
-                  <>
-                    <button
-                      onClick={() => fineTuneFm(Number(fmPlayer.frequency_offset_hz || 0) - 25000)}
-                      className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                    >
-                      -25k
-                    </button>
-                    <button
-                      onClick={() => fineTuneFm(0)}
-                      className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                    >
-                      Center
-                    </button>
-                    <button
-                      onClick={() => fineTuneFm(Number(fmPlayer.frequency_offset_hz || 0) + 25000)}
-                      className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                    >
-                      +25k
-                    </button>
-                    <button
-                      onClick={stopFmPlayer}
-                      className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                    >
-                      Stop FM
-                    </button>
-                  </>
-                )}
+        <section className="relative flex-1 overflow-hidden">
+          <div className="relative flex min-h-screen items-center justify-center p-5 lg:p-7">
+            <div className="w-full max-w-6xl rounded-[32px] border border-white/10 bg-[#09111a]/65 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.35)] backdrop-blur-xl lg:p-6">
+              <NowListeningCard
+                status={displayStatus}
+                dispatchAlert={dispatchAlert}
+                systemProfile={sdrSystem}
+                runtime={sdrRuntime}
+              />
+              <div className="mt-4">
+                <RadioLog
+                  transcripts={transcripts}
+                  transcriptStatus={transcriptStatus}
+                  onStart={startTranscription}
+                  onStop={stopTranscription}
+                  onClear={clearTranscripts}
+                />
               </div>
             </div>
-            <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Artist</div>
-                <div className="mt-1 font-semibold text-white">{activeFmStation?.artist || activeFmStation?.callsign || "Tune FM channel"}</div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Song</div>
-                <div className="mt-1 font-semibold text-white">{activeFmStation?.song_title || activeFmStation?.name || "Waiting for metadata"}</div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Metadata</div>
-                <div className="mt-1 font-semibold text-white">{activeFmStation?.metadata_status === "ok" ? activeFmStation.metadata_source : activeFmStation?.metadata_status || "Not configured"}</div>
-              </div>
-            </div>
-            {activeFmStation?.metadata_raw && (
-              <div className="mt-3 rounded border border-white/10 bg-black/20 p-3 text-xs text-slate-400">
-                {activeFmStation.program_name
-                  ? `${activeFmStation.program_name}${activeFmStation.program_host ? ` with ${activeFmStation.program_host}` : ""}${activeFmStation.album ? ` - ${activeFmStation.album}` : ""}`
-                  : activeFmStation.metadata_raw}
-              </div>
-            )}
-            <div className="mt-3 text-sm text-slate-400">
-              {fmPlayer?.playing
-                ? `Audio playing through Windows output. Tuned ${((fmPlayer.tuned_frequency_hz || fmPlayer.frequency_hz || 0) / 1_000_000).toFixed(4)} MHz, offset ${Number(fmPlayer.frequency_offset_hz || 0)} Hz, gain ${fmPlayer.gain_used_db ?? "auto"} dB. Signal ${Number(fmPlayer.last_db ?? -99).toFixed(1)} dB, peak ${Number(fmPlayer.peak_db ?? -99).toFixed(1)} dB.`
-                : "Click any Austin FM Radio channel in the left panel to tune, play audio, and show station ID."}
-            </div>
-          </div>
-
-          <ScannerControls
-            status={status}
-            gain={gain}
-            muted={muted}
-            onStart={startScanner}
-            onStop={stopScanner}
-            onScanAllSystems={scanAllSystems}
-            onHoldOrResume={holdOrResume}
-            onSkip={skipChannel}
-            onToggleMute={toggleMute}
-            onGain={changeGain}
-          />
-
-          <div className="mt-5 rounded border border-triCoreBlue/20 bg-[#151e2b] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold">P25 Trunking Decoder</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  {p25?.message || "Loading decoder status"}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {p25?.running && (
-                  <button
-                    onClick={stopP25Decoder}
-                    className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                  >
-                    Stop SDR Backend
-                  </button>
-                )}
-                <button
-                  onClick={launchTrunkingDecoder}
-                  className="rounded border border-triCoreBlue/30 bg-triCoreBlue/10 px-4 py-2 text-sm font-semibold text-triCoreBlue hover:bg-triCoreBlue/20"
-                >
-                  Start SDR Backend
-                </button>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded border border-white/10 bg-black/20 p-3">
-              <div>
-                <div className="text-xs uppercase tracking-normal text-slate-500">TriCore SDR Runtime</div>
-                <div className="mt-1 text-sm font-semibold text-white">
-                  {sdrRuntime?.ready ? "Copied and ready" : "Not synced"}
-                </div>
-                <div className="mt-1 max-w-3xl truncate text-xs text-slate-500">
-                  {sdrRuntime?.runtime_root || "tools/tricore-sdr"}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                <span className={sdrRuntime?.tools?.rtl_fm ? "text-triCoreGreen" : "text-red-300"}>RTL</span>
-                <span className={sdrRuntime?.tools?.dsdplus ? "text-triCoreGreen" : "text-red-300"}>DSD+</span>
-                <span className={sdrRuntime?.tools?.sdrtrunk_launcher ? "text-triCoreGreen" : "text-red-300"}>P25</span>
-                <span className={sdrRuntime?.tools?.jmbe ? "text-triCoreGreen" : "text-red-300"}>JMBE</span>
-                <button
-                  onClick={syncSdrRuntime}
-                  className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/5"
-                >
-                  Sync Runtime
-                </button>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Selected TG</div>
-                <div className="mt-1 font-semibold text-white">
-                  {p25?.selected_talkgroup ? `${p25.selected_talkgroup.alpha_tag} (${p25.selected_talkgroup.decimal})` : "Click a GATRRS talkgroup"}
-                </div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Decoder State</div>
-                <div className={`mt-1 font-semibold ${p25?.state === "STARTING" ? "animate-pulse text-yellow-400" : p25?.running ? "text-triCoreGreen" : "text-white"}`}>
-                  {p25?.running ? p25?.state || "RUNNING" : p25?.external_decoder?.installed ? "SDRTrunk Ready" : "Not Found"}
-                </div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Radio IDs</div>
-                <div className="mt-1 font-semibold text-white">
-                  {p25?.active_call?.source_radio_id || p25?.active_call?.target_radio_id
-                    ? `SRC ${p25?.active_call?.source_radio_id || "?"} / DST ${p25?.active_call?.target_radio_id || "?"}`
-                    : "Waiting for SDRTrunk call data"}
-                </div>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Control Channel</div>
-                <div className="mt-1 font-semibold text-white">
-                  {p25?.preferred_control_channel_hz ? `${(p25.preferred_control_channel_hz / 1_000_000).toFixed(4)} MHz` : "Not configured"}
-                </div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Voice Frequency</div>
-                <div className="mt-1 font-semibold text-white">
-                  {p25?.active_call?.voice_frequency_hz ? `${(p25.active_call.voice_frequency_hz / 1_000_000).toFixed(4)} MHz` : "Waiting"}
-                </div>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-normal text-slate-500">Audio Path</div>
-                <div className="mt-1 font-semibold text-white">Hidden SDR Backend</div>
-              </div>
-            </div>
-            {p25?.last_event?.raw && (
-              <div className="mt-3 truncate rounded border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-400">
-                {p25.last_event.raw}
-              </div>
-            )}
-
-            {/* Native voice scanner activity */}
-            {p25?.voice_scan_active && (
-              <div className="mt-3">
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-triCoreGreen/70">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-triCoreGreen" />
-                  GATRRS Voice Scan Active
-                  {p25.voice_sweep_stats && (
-                    <span className="ml-auto font-normal normal-case text-slate-500">
-                      sweep {p25.voice_sweep_stats.sweeps} · {p25.voice_sweep_stats.last_sweep_ms}ms · {p25.voice_sweep_stats.channels} ch
-                    </span>
-                  )}
-                </div>
-                {p25.active_voice_channels?.length > 0 ? (
-                  <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                    {p25.active_voice_channels.map((ch) => (
-                      <div key={ch.frequency_hz} className="flex items-center gap-2 rounded border border-triCoreGreen/25 bg-triCoreGreen/5 px-3 py-2 text-xs">
-                        <span className="h-2 w-2 shrink-0 rounded-full bg-triCoreGreen" />
-                        <span className="font-mono font-semibold text-triCoreGreen">{ch.frequency_mhz} MHz</span>
-                        <span className="ml-auto text-slate-400 tabular-nums">{ch.signal_db} dB</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-500">
-                    No P25 voice activity detected — scanning {p25?.voice_sweep_stats?.channels ?? "…"} GATRRS frequencies
-                  </div>
-                )}
-              </div>
-            )}
-            {p25?.voice_scan_error && (
-              <div className="mt-2 rounded border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                Voice scan: {p25.voice_scan_error}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-5 rounded border border-white/10 bg-black/20 p-4 text-sm text-slate-300">
-            <strong className="text-white">Status: </strong>{status.message || "Ready"}
           </div>
         </section>
       </main>
-
-      <RecentCallTicker calls={calls} />
 
       {showAddChannel && (
         <ChannelEditor

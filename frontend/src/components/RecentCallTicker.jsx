@@ -15,33 +15,37 @@ function timeAgo(isoString) {
 export default function RecentCallTicker({ calls = [] }) {
   if (calls.length === 0) {
     return (
-      <footer className="border-t border-white/10 bg-[#101720] px-5 py-3">
-        <div className="flex items-center gap-3">
-          <div className="text-xs font-semibold uppercase tracking-normal text-slate-500">Recent Calls</div>
-          <span className="text-sm text-slate-600">No calls logged yet — start scanning to see activity</span>
+      <footer className="border-t border-white/10 bg-[#071019]/95 px-5 py-4 backdrop-blur-xl">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.32em] text-slate-500">Recent Calls</div>
+          <span className="text-sm text-slate-600">No calls logged yet — start scanning to see activity.</span>
         </div>
       </footer>
     );
   }
 
   return (
-    <footer className="border-t border-white/10 bg-[#101720] px-5 py-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-normal text-slate-400">
-          Recent Calls <span className="ml-2 text-slate-600 font-normal normal-case">{calls.length} logged</span>
+    <footer className="border-t border-white/10 bg-[#071019]/95 px-5 py-4 backdrop-blur-xl">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.32em] text-slate-400">Recent Calls</div>
+        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
+          {calls.length} logged
         </div>
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
         {calls.slice(0, 12).map((call) => (
           <div
             key={call.id}
-            className="shrink-0 rounded border border-white/10 bg-white/5 px-3 py-2 text-xs"
+            className="shrink-0 rounded-[20px] border border-white/10 bg-[#111a25]/75 px-3 py-3 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
           >
-            <div className={`font-semibold ${SERVICE_COLOR[call.service_type] || "text-slate-200"}`}>
-              {call.name}
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${(SERVICE_COLOR[call.service_type] || "text-slate-200").replace("text", "bg")}`} />
+              <div className={`font-semibold ${SERVICE_COLOR[call.service_type] || "text-slate-200"}`}>
+                {call.name}
+              </div>
             </div>
-            <div className="text-slate-400 tabular-nums">{(call.frequency_hz / 1_000_000).toFixed(4)} MHz</div>
-            <div className="text-slate-600 mt-0.5">{call.time ? timeAgo(call.time) : ""}</div>
+            <div className="mt-2 text-slate-400 tabular-nums">{(Number(call.frequency_hz || 0) / 1_000_000).toFixed(4)} MHz</div>
+            <div className="mt-1 text-slate-600">{call.time ? timeAgo(call.time) : ""}</div>
           </div>
         ))}
       </div>

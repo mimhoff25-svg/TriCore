@@ -129,9 +129,9 @@ pip install -r requirements.txt
 ### 9. Run the Backend
 
 ```powershell
-cd "D:\Scanner SDR\SDRTrunk\tricore-scanner\backend"
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
+cd "D:\Scanner SDR\SDRTrunk\tricore-scanner"
+.\backend\.venv\Scripts\Activate.ps1
+python -m uvicorn backend.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Open:

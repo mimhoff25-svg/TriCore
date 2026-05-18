@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Folder, ListTree, Lock, Play, RadioTower, RotateCcw, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, ListTree, Lock, Play, RadioTower, RotateCcw, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -19,6 +19,7 @@ const SERVICE_DOT = {
   schools: "bg-fuchsia-400",
   fm_radio: "bg-pink-400",
   am_radio: "bg-rose-400",
+  shortwave: "bg-amber-400",
   custom: "bg-slate-400",
 };
 
@@ -38,8 +39,38 @@ const SERVICE_LABEL = {
   schools: "Schools",
   fm_radio: "FM Broadcast",
   am_radio: "AM Broadcast",
+  shortwave: "Shortwave",
   custom: "Other",
 };
+
+function isP25Channel(ch) {
+  const modulation = String(ch?.modulation || "").toLowerCase();
+  const category = String(ch?.category || "").toLowerCase();
+  const service = String(ch?.service_type || "").toLowerCase();
+  return modulation === "p25" || category.includes("trunk") || service === "p25";
+}
+
+function isFmChannel(ch) {
+  const modulation = String(ch?.modulation || "").toLowerCase();
+  const category = String(ch?.category || "").toLowerCase();
+  const service = String(ch?.service_type || "").toLowerCase();
+  return service === "fm_radio" || category === "fm_radio" || modulation === "wfm";
+}
+
+function isAmChannel(ch) {
+  const modulation = String(ch?.modulation || "").toLowerCase();
+  const category = String(ch?.category || "").toLowerCase();
+  const service = String(ch?.service_type || "").toLowerCase();
+  return service === "am_radio" || category === "am_radio" || modulation === "am";
+}
+
+function isShortwaveChannel(ch) {
+  const modulation = String(ch?.modulation || "").toLowerCase();
+  const category = String(ch?.category || "").toLowerCase();
+  const service = String(ch?.service_type || "").toLowerCase();
+  const name = String(ch?.name || "").toLowerCase();
+  return service === "shortwave" || category === "shortwave" || category === "sw" || modulation === "usb" || modulation === "lsb" || name.includes("shortwave");
+}
 
 const PLAYLISTS = [
   { id: "favorites", name: "Favorites", label: "FL 0", match: (ch) => ch.favorite },
@@ -47,7 +78,10 @@ const PLAYLISTS = [
   { id: "public-safety", name: "Public Safety", label: "FL 2", match: (ch) => ["police", "fire", "ems", "interop"].includes(ch.service_type) || ch.category === "public_safety" },
   { id: "fire-ems", name: "Fire / EMS", label: "FL 3", match: (ch) => ["fire", "ems"].includes(ch.service_type) },
   { id: "weather", name: "Weather", label: "FL 4", match: (ch) => ch.service_type === "weather" },
-  { id: "broadcast", name: "Broadcast FM", label: "FL 5", match: (ch) => ch.service_type === "fm_radio" },
+  { id: "broadcast-fm", name: "Broadcast FM", label: "FL 5", match: (ch) => isFmChannel(ch) },
+  { id: "broadcast-am", name: "Broadcast AM", label: "FL 6", match: (ch) => isAmChannel(ch) },
+  { id: "shortwave", name: "Shortwave", label: "FL 7", match: (ch) => isShortwaveChannel(ch) },
+  { id: "p25", name: "P25 Talkgroups", label: "FL 8", match: (ch) => isP25Channel(ch) },
 ];
 
 function groupBy(items, keyFn) {
@@ -64,6 +98,11 @@ function ToggleIcon({ open }) {
   return open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />;
 }
 
+function isTcsoTalkgroup(tg) {
+  const text = `${tg?.alpha_tag || ""} ${tg?.description || ""}`.toLowerCase();
+  return text.includes("tcso") || text.includes("tc trans");
+}
+
 export default function SystemList({
   channels: channelsProp,
   disabledSystems,
@@ -72,24 +111,32 @@ export default function SystemList({
   onScanSystem,
   onScanAllSystems,
   onScanPlaylist,
+  onScanTalkgroupGroup,
   onSelectTalkgroup,
   activeChannel,
   activePlaylist,
   selectedTalkgroup,
+  talkgroupRefreshKey,
 }) {
   const [internalChannels, setInternalChannels] = useState([]);
   const [talkgroups, setTalkgroups] = useState([]);
   const [expanded, setExpanded] = useState({
     favorites: true,
+    quickModes: true,
     services: true,
     departments: true,
     trunked: true,
+    tcsoStations: true,
+    apdStations: false,
   });
   const [loading, setLoading] = useState(!channelsProp);
+  const [query, setQuery] = useState("");
 
   const channels = channelsProp ?? internalChannels;
+  const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
+    setLoading(true);
     const promises = [
       fetch(`${API_BASE}/api/trunked/talkgroups?include_encrypted=true`).then((r) => r.json()).catch(() => []),
     ];
@@ -107,19 +154,68 @@ export default function SystemList({
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [channelsProp]);
+  }, [channelsProp, talkgroupRefreshKey]);
+
+  const filteredChannels = useMemo(() => {
+    if (!normalizedQuery) return channels;
+    return channels.filter((ch) => (
+      [ch.id, ch.name, ch.system, ch.service_type, ch.category]
+        .some((value) => String(value || "").toLowerCase().includes(normalizedQuery))
+    ));
+  }, [channels, normalizedQuery]);
+
+  const filteredTalkgroups = useMemo(() => {
+    if (!normalizedQuery) return talkgroups;
+    return talkgroups.filter((tg) => (
+      [tg.id, tg.alpha_tag, tg.description, tg.tag, tg.service_type, tg.decimal]
+        .some((value) => String(value || "").toLowerCase().includes(normalizedQuery))
+    ));
+  }, [talkgroups, normalizedQuery]);
 
   const playlists = useMemo(
     () => PLAYLISTS.map((playlist) => ({
       ...playlist,
-      channels: channels.filter(playlist.match),
+      channels: filteredChannels.filter(playlist.match),
     })).filter((playlist) => playlist.channels.length > 0),
-    [channels],
+    [filteredChannels],
   );
 
-  const serviceGroups = useMemo(() => groupBy(channels, (ch) => ch.service_type), [channels]);
-  const systemGroups = useMemo(() => groupBy(channels, (ch) => ch.system), [channels]);
-  const talkgroupGroups = useMemo(() => groupBy(talkgroups, (tg) => tg.tag || SERVICE_LABEL[tg.service_type]), [talkgroups]);
+  const serviceGroups = useMemo(() => groupBy(filteredChannels, (ch) => ch.service_type), [filteredChannels]);
+  const systemGroups = useMemo(() => groupBy(filteredChannels, (ch) => ch.system), [filteredChannels]);
+  const talkgroupGroups = useMemo(() => groupBy(filteredTalkgroups, (tg) => tg.tag || SERVICE_LABEL[tg.service_type]), [filteredTalkgroups]);
+  const tcsoTalkgroups = useMemo(
+    () => filteredTalkgroups
+      .filter(isTcsoTalkgroup)
+      .sort((a, b) => Number(a.decimal || 0) - Number(b.decimal || 0)),
+    [filteredTalkgroups],
+  );
+  const apdTalkgroups = useMemo(
+    () => filteredTalkgroups
+      .filter((tg) => {
+        const alpha = String(tg.alpha_tag || "").toLowerCase();
+        const tag = String(tg.tag || "").toLowerCase();
+        return alpha.includes("apd") || tag.includes("austin police");
+      })
+      .sort((a, b) => Number(a.decimal || 0) - Number(b.decimal || 0)),
+    [filteredTalkgroups],
+  );
+  const clearTalkgroups = useMemo(
+    () => filteredTalkgroups.filter((tg) => !tg.encrypted),
+    [filteredTalkgroups],
+  );
+
+  const quickModes = useMemo(() => {
+    const fm = filteredChannels.filter((ch) => isFmChannel(ch));
+    const am = filteredChannels.filter((ch) => isAmChannel(ch));
+    const sw = filteredChannels.filter((ch) => isShortwaveChannel(ch));
+    const p25 = clearTalkgroups;
+    return [
+      { id: "mode-fm", name: "FM", count: fm.length, channels: fm, type: "channels" },
+      { id: "mode-am", name: "AM", count: am.length, channels: am, type: "channels" },
+      { id: "mode-sw", name: "SW", count: sw.length, channels: sw, type: "channels" },
+      { id: "mode-p25", name: "P25", count: p25.length, channels: p25, type: "talkgroups" },
+    ];
+  }, [filteredChannels, clearTalkgroups]);
 
   function toggleExpand(name) {
     setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
@@ -132,6 +228,18 @@ export default function SystemList({
       channelIds: list.map((ch) => ch.id),
       systemNames: [...new Set(list.map((ch) => ch.system))],
     });
+  }
+
+  function talkgroupGroupId(name) {
+    const slug = String(name || "group")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return `tg-group-${slug || "group"}`;
+  }
+
+  function scanTalkgroups(name, list) {
+    onScanTalkgroupGroup?.(name, list, talkgroupGroupId(name));
   }
 
   function folderHeader(id, title, subtitle, icon, action) {
@@ -166,12 +274,35 @@ export default function SystemList({
           </button>
         </div>
         <p className="mt-0.5 text-xs text-slate-500">
-          {Object.keys(systemGroups).length} departments - {channels.length} channels - {talkgroups.length} talkgroups
+          {Object.keys(systemGroups).length} departments - {filteredChannels.length} channels - {filteredTalkgroups.length} talkgroups - {quickModes.map((mode) => `${mode.name}:${mode.count}`).join(" ")}{normalizedQuery ? " (filtered)" : ""}
         </p>
+        <div className="mt-3 flex items-center gap-2 rounded border border-white/10 bg-black/20 px-2 py-1.5">
+          <Search className="h-4 w-4 text-slate-500" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter channels, systems, talkgroups"
+            className="w-full bg-transparent text-sm text-white placeholder:text-slate-500 focus:outline-none"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              aria-label="Clear filter"
+              className="rounded p-1 text-slate-400 hover:bg-white/5 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {loading && <div className="p-3 text-sm text-slate-500">Loading...</div>}
+        {!loading && normalizedQuery && filteredChannels.length === 0 && filteredTalkgroups.length === 0 && (
+          <div className="rounded border border-white/10 bg-black/20 p-3 text-sm text-slate-500">
+            No matches for "{query}".
+          </div>
+        )}
 
         <div className="rounded border border-triCoreAmber/20 bg-triCoreAmber/5">
           {folderHeader("favorites", "Favorites Lists", `${playlists.length} quick scan folders`, <Star className="h-4 w-4" />)}
@@ -201,6 +332,36 @@ export default function SystemList({
                       {playlist.channels.map((ch) => <ChannelRow key={ch.id} channel={ch} active={activeChannel?.id === ch.id} onTuneChannel={onTuneChannel} />)}
                     </div>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded border border-triCoreGreen/20 bg-triCoreGreen/5">
+          {folderHeader("quickModes", "Quick Modes", "One-tap FM / AM / SW / P25", <RadioTower className="h-4 w-4" />)}
+          {expanded.quickModes && (
+            <div className="border-t border-white/5 p-2">
+              {quickModes.map((mode) => (
+                <div key={mode.id} className="mb-1 rounded border border-white/10 bg-black/10 px-2 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded border border-triCoreGreen/25 px-1.5 py-0.5 text-[10px] font-bold text-triCoreGreen">{mode.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-white">{mode.count} entries</span>
+                    <button
+                      disabled={mode.count === 0}
+                      onClick={() => {
+                        if (mode.type === "talkgroups") {
+                          scanTalkgroups("P25 Quick Mode", mode.channels);
+                          return;
+                        }
+                        scanChannels(mode.id, `${mode.name} Quick Mode`, mode.channels);
+                      }}
+                      aria-label={`Run ${mode.name} quick mode`}
+                      className="flex h-8 w-8 items-center justify-center rounded border border-triCoreGreen/25 bg-triCoreGreen/10 text-triCoreGreen hover:bg-triCoreGreen/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -273,24 +434,94 @@ export default function SystemList({
           )}
         </div>
 
-        {talkgroups.length > 0 && (
+        {filteredTalkgroups.length > 0 && (
           <div className="rounded border border-triCoreBlue/20 bg-triCoreBlue/5">
-            {folderHeader("trunked", "GATRRS Talkgroup Folders", "Click a clear talkgroup to monitor in SDRTrunk", <RadioTower className="h-4 w-4" />)}
+            {folderHeader("trunked", "GATRRS Talkgroup Folders", "Click a clear talkgroup to monitor in TriCore", <RadioTower className="h-4 w-4" />)}
             {expanded.trunked && (
               <div className="border-t border-white/5">
-                {Object.entries(talkgroupGroups).sort(([a], [b]) => a.localeCompare(b)).map(([tag, list]) => {
-                  const id = `tg-${tag}`;
-                  const locked = list.filter((tg) => tg.encrypted).length;
-                  return (
-                    <div key={tag} className="border-b border-white/5 last:border-b-0">
-                      <button onClick={() => toggleExpand(id)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
-                        <span className="text-slate-500"><ToggleIcon open={expanded[id]} /></span>
-                        <span className={`h-2 w-2 rounded-full ${SERVICE_DOT[list[0]?.service_type] || SERVICE_DOT.custom}`} />
+                {tcsoTalkgroups.length > 0 && (
+                  <div className={`border-b border-white/5 ${activePlaylist?.id === talkgroupGroupId("TCSO Talkgroups") ? "bg-triCoreBlue/10" : ""}`}>
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <button onClick={() => toggleExpand("tcsoStations")} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                        <span className="text-slate-500"><ToggleIcon open={expanded.tcsoStations} /></span>
+                        <span className={`h-2 w-2 rounded-full ${SERVICE_DOT.police}`} />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-white">{tag}</span>
-                          <span className="block text-xs text-slate-500">{list.length} TGs{locked ? ` - ${locked} locked` : ""}</span>
+                          <span className="block truncate text-sm font-semibold text-white">TCSO Talkgroups</span>
+                          <span className="block text-xs text-slate-500">{tcsoTalkgroups.length} TGs - family tracking</span>
                         </span>
                       </button>
+                      <button
+                        onClick={() => scanTalkgroups("TCSO Talkgroups", tcsoTalkgroups)}
+                        aria-label="Scan TCSO talkgroups"
+                        className="flex h-8 w-8 items-center justify-center rounded border border-triCoreGreen/25 bg-triCoreGreen/10 text-triCoreGreen hover:bg-triCoreGreen/20"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {expanded.tcsoStations && tcsoTalkgroups.map((tg) => (
+                      <TalkgroupRow
+                        key={`tcso-${tg.id}`}
+                        talkgroup={tg}
+                        active={selectedTalkgroup?.decimal === tg.decimal}
+                        onSelectTalkgroup={onSelectTalkgroup}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {apdTalkgroups.length > 0 && (
+                  <div className={`border-b border-white/5 ${activePlaylist?.id === talkgroupGroupId("APD Stations") ? "bg-triCoreBlue/10" : ""}`}>
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <button onClick={() => toggleExpand("apdStations")} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                        <span className="text-slate-500"><ToggleIcon open={expanded.apdStations} /></span>
+                        <span className={`h-2 w-2 rounded-full ${SERVICE_DOT.police}`} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-white">APD Stations</span>
+                          <span className="block text-xs text-slate-500">{apdTalkgroups.length} TGs</span>
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => scanTalkgroups("APD Stations", apdTalkgroups)}
+                        aria-label="Scan APD stations"
+                        className="flex h-8 w-8 items-center justify-center rounded border border-triCoreGreen/25 bg-triCoreGreen/10 text-triCoreGreen hover:bg-triCoreGreen/20"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {expanded.apdStations && apdTalkgroups.map((tg) => (
+                      <TalkgroupRow
+                        key={`apd-${tg.id}`}
+                        talkgroup={tg}
+                        active={selectedTalkgroup?.decimal === tg.decimal}
+                        onSelectTalkgroup={onSelectTalkgroup}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {Object.entries(talkgroupGroups).sort(([a], [b]) => a.localeCompare(b)).map(([tag, list]) => {
+                  const id = `tg-${tag}`;
+                  const playlistId = talkgroupGroupId(tag);
+                  const locked = list.filter((tg) => tg.encrypted).length;
+                  return (
+                    <div key={tag} className={`border-b border-white/5 last:border-b-0 ${activePlaylist?.id === playlistId ? "bg-triCoreBlue/10" : ""}`}>
+                      <div className="flex items-center gap-2 px-3 py-2">
+                        <button onClick={() => toggleExpand(id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                          <span className="text-slate-500"><ToggleIcon open={expanded[id]} /></span>
+                          <span className={`h-2 w-2 rounded-full ${SERVICE_DOT[list[0]?.service_type] || SERVICE_DOT.custom}`} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-white">{tag}</span>
+                            <span className="block text-xs text-slate-500">{list.length} TGs{locked ? ` - ${locked} locked` : ""}</span>
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => scanTalkgroups(tag, list)}
+                          aria-label={`Scan ${tag}`}
+                          className="flex h-8 w-8 items-center justify-center rounded border border-triCoreGreen/25 bg-triCoreGreen/10 text-triCoreGreen hover:bg-triCoreGreen/20"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                       {expanded[id] && list.map((tg) => (
                         <TalkgroupRow
                           key={tg.id}
@@ -303,7 +534,7 @@ export default function SystemList({
                   );
                 })}
                 <div className="px-3 py-2 text-xs text-slate-500">
-                  P25 voice follows the control channel in SDRTrunk. Locked entries are encrypted/unavailable.
+                  P25 voice follows the control channel in TriCore. Locked entries are encrypted/unavailable.
                 </div>
               </div>
             )}
@@ -315,6 +546,11 @@ export default function SystemList({
 }
 
 function ChannelRow({ channel, active, onTuneChannel }) {
+  const frequencyHz = Number(channel?.frequency_hz);
+  const frequencyLabel = Number.isFinite(frequencyHz) && frequencyHz > 0
+    ? `${(frequencyHz / 1_000_000).toFixed(4)} MHz`
+    : "--.---- MHz";
+
   return (
     <button
       onClick={() => onTuneChannel?.(channel)}
@@ -324,7 +560,7 @@ function ChannelRow({ channel, active, onTuneChannel }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-medium text-slate-200">{channel.name}</span>
         <span className="block text-xs text-slate-500 tabular-nums">
-          {(channel.frequency_hz / 1_000_000).toFixed(4)} MHz
+          {frequencyLabel}
           {channel.priority && <span className="ml-1 text-triCoreAmber">PRI</span>}
           {channel.favorite && <span className="ml-1 text-triCoreBlue">FAV</span>}
         </span>

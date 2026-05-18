@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Austin Police Department">
+  <rect width="128" height="128" rx="24" fill="#111827"/>
+  <rect x="10" y="10" width="108" height="108" rx="20" fill="#1d4ed8" opacity="0.24"/>
+  <path d="M64 20 94 36v31c0 22-13 35-30 42C47 102 34 89 34 67V36z" fill="#bfdbfe"/>
+  <path d="M64 34v48M48 58h32" stroke="#1e3a8a" stroke-width="7" stroke-linecap="round"/>
+  <text x="64" y="120" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#dbeafe">APD</text>
+</svg>

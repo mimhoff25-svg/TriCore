@@ -1,0 +1,44 @@
+{
+  "id": "tricore-austin",
+  "name": "TriCore Austin SDR",
+  "location": "Austin / Travis County, TX",
+  "focus": "All-in-one scanner system built from workspace SDR runtimes, tuner profiles, and bandplans.",
+  "capabilities": [
+    "conventional_scanning",
+    "fm_radio",
+    "p25_trunking",
+    "talkgroup_hold",
+    "playlist_scanning",
+    "managed_runtime"
+  ],
+  "bandplan_path": "sdrpp_windows_x64/res/bandplans/usa.json",
+  "tuner_config_path": "SDRTrunk/configuration/tuner_configuration.json",
+  "tuner_profiles": [
+    {
+      "id": "rtl-2832-gatrrs",
+      "name": "RTL-2832 GATRRS",
+      "type": "rtl_sdr"
+    }
+  ],
+  "decoder_engines": [
+    {
+      "id": "headless-dsdplus",
+      "name": "Headless DSDPlus/FMP24",
+      "source_path": "sdrpp_windows_x64/DSDPlus",
+      "protocols": [
+        "P25 Phase I",
+        "P25 Phase II"
+      ]
+    }
+  ],
+  "systems": [
+    {
+      "id": "gatrrs-travis",
+      "name": "GATRRS Travis County",
+      "system_type": "Project 25 Phase II",
+      "trunked_config_path": "SDRTrunk/tricore-scanner/configs/trunked/gatrrs_travis_county.json",
+      "preferred_tuner_profile_id": "rtl-2832-gatrrs",
+      "preferred_decoder_engine_id": "headless-dsdplus"
+    }
+  ]
+}

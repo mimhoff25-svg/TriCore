@@ -10,7 +10,8 @@
     "desktop:dev": "set ELECTRON_RUN_AS_NODE=& electron . --dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test:layout": "set ELECTRON_RUN_AS_NODE=& npm run build && playwright test"
+    "test:layout": "set ELECTRON_RUN_AS_NODE=& npm run build && playwright test tests/desktop-layout.spec.cjs",
+    "test:bearcat": "set ELECTRON_RUN_AS_NODE=& npm run build && playwright test tests/bearcat-hard.spec.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",
