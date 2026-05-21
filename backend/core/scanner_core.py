@@ -315,8 +315,8 @@ class ScannerCore:
             self.receiver.tune(self.current_channel.frequency_hz, self.current_channel.modulation)
         return self.status(advance=False)
 
-    def set_bank_enabled(self, bank_id: str, enabled: bool, apply_if_unchanged: bool = False) -> ScannerStatus:
-        self.frequency_manager.set_bank_enabled(bank_id, enabled, apply_if_unchanged=apply_if_unchanged)
+    def set_bank_enabled(self, bank_id: str, enabled: bool, force_apply: bool = False) -> ScannerStatus:
+        self.frequency_manager.set_bank_enabled(bank_id, enabled, force_apply=force_apply)
         self.settings.selected_bank_ids = self.frequency_manager.enabled_bank_ids()
         if self.current_channel and not self.frequency_manager.is_channel_scan_enabled(self.current_channel.id):
             self._scan_hold_until = 0.0

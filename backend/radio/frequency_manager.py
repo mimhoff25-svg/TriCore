@@ -414,11 +414,11 @@ class FrequencyManager:
     def get_bank(self, bank_id: str) -> Optional[Bank]:
         return next((bank for bank in self.banks if bank.id == bank_id), None)
 
-    def set_bank_enabled(self, bank_id: str, enabled: bool, apply_if_unchanged: bool = False) -> Optional[Bank]:
+    def set_bank_enabled(self, bank_id: str, enabled: bool, force_apply: bool = False) -> Optional[Bank]:
         bank = self.get_bank(bank_id)
         if bank is None:
             return None
-        if bank.enabled == enabled and not apply_if_unchanged:
+        if bank.enabled == enabled and not force_apply:
             return bank
         updated = bank.model_copy(update={"enabled": enabled})
         self.banks = [updated if item.id == bank_id else item for item in self.banks]
