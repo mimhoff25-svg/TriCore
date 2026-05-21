@@ -63,6 +63,21 @@ def _creation_flags() -> int:
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
+def _cleanup_rtl_test_processes() -> None:
+    if os.name != "nt":
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/IM", "rtl_test.exe", "/T", "/F"],
+            capture_output=True,
+            timeout=5,
+            startupinfo=_hidden_startupinfo(),
+            creationflags=_creation_flags(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _tail_text(path: Path, byte_limit: int = LOG_TAIL_BYTES) -> str:
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
@@ -108,18 +123,23 @@ def probe_rtl_sdr_device(force: bool = False) -> dict[str, object]:
             snapshot["exit_code"] = completed.returncode
             snapshot["output"] = output
 
-            if completed.returncode == 0 and "Found" in output and "device" in output.lower():
+            lowered_output = output.lower()
+            detected_supported_tuner = "found rafael micro" in lowered_output or "found fitipower" in lowered_output
+            if "access denied" in lowered_output or "usb_open" in lowered_output:
+                snapshot["message"] = "RTL-SDR access denied. Install the WinUSB driver with Zadig or close the process holding the tuner."
+            elif "no supported devices found" in lowered_output:
+                snapshot["message"] = "No RTL-SDR tuner detected by the bundled probe."
+            elif "found" in lowered_output and "device" in lowered_output and (
+                completed.returncode == 0 or detected_supported_tuner
+            ):
                 snapshot["available"] = True
                 snapshot["message"] = output.splitlines()[0]
-            elif "access denied" in output.lower() or "usb_open" in output.lower():
-                snapshot["message"] = "RTL-SDR access denied. Install the WinUSB driver with Zadig or close the process holding the tuner."
-            elif "no supported devices found" in output.lower():
-                snapshot["message"] = "No RTL-SDR tuner detected by the bundled probe."
             elif output:
                 snapshot["message"] = output.splitlines()[-1]
             else:
                 snapshot["message"] = "RTL-SDR probe failed. The driver may be missing, the device may be busy, or the dongle could not be opened."
         except subprocess.TimeoutExpired:
+            _cleanup_rtl_test_processes()
             snapshot["message"] = "RTL-SDR probe timed out while opening the tuner."
         except OSError as exc:
             snapshot["message"] = f"RTL-SDR probe failed: {exc}"
@@ -131,8 +151,9 @@ def probe_rtl_sdr_device(force: bool = False) -> dict[str, object]:
 
 class SdrTrunkRuntime:
     def __init__(self) -> None:
-        self.profile_home = WORKSPACE_ROOT
-        self.profile_root = WORKSPACE_ROOT / "SDRTrunk"
+        default_profile_root = WORKSPACE_ROOT / "SDRTrunk"
+        self.profile_root = WORKSPACE_ROOT if (WORKSPACE_ROOT / "playlist").exists() else default_profile_root
+        self.profile_home = self.profile_root.parent
         self._process: Optional[subprocess.Popen[bytes]] = None
         self._last_error: Optional[str] = None
         self._started_at: Optional[float] = None
@@ -148,11 +169,55 @@ class SdrTrunkRuntime:
         if self._process is not None and self._process.poll() is not None:
             self._process = None
 
+    def _managed_process_ids(self) -> list[int]:
+        if os.name != "nt":
+            return []
+
+        launcher = find_runtime_tool("sdrtrunk_launcher")
+        launcher_root = str(launcher.parents[1]).replace("'", "''").lower() if launcher is not None else ""
+        profile_home = str(self.profile_home).replace("'", "''").lower()
+        script = (
+            f"$launcherRoot = '{launcher_root}';"
+            f"$profileHome = '{profile_home}';"
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe' -or $_.Name -eq 'cmd.exe' } | "
+            "ForEach-Object { "
+            "$cmdLine = if ($_.CommandLine) { $_.CommandLine.ToLowerInvariant() } else { '' };"
+            "if (($launcherRoot -and $cmdLine.Contains($launcherRoot)) -or "
+            "($cmdLine.Contains('io.github.dsheirer.gui.sdrtrunk') -and $cmdLine.Contains($profileHome))) { $_.ProcessId }"
+            "}"
+        )
+        try:
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                startupinfo=_hidden_startupinfo(),
+                creationflags=_creation_flags(),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if completed.returncode != 0:
+            return []
+
+        process_ids: list[int] = []
+        for line in completed.stdout.splitlines():
+            try:
+                process_ids.append(int(line.strip()))
+            except ValueError:
+                pass
+        return sorted(set(process_ids))
+
     def _latest_log_path(self) -> Optional[Path]:
         log_dir = self.log_dir()
         if not log_dir.exists():
             return None
-        logs = sorted(log_dir.glob("*_sdrtrunk_app.log"), key=lambda path: path.stat().st_mtime)
+        current_log = log_dir / "sdrtrunk_app.log"
+        if current_log.exists():
+            return current_log
+        logs = list(log_dir.glob("*_sdrtrunk_app.log"))
+        logs = sorted(set(logs), key=lambda path: path.stat().st_mtime)
         return logs[-1] if logs else None
 
     def _log_snapshot(self) -> dict[str, Optional[str]]:
@@ -198,7 +263,9 @@ class SdrTrunkRuntime:
         launcher = find_runtime_tool("sdrtrunk_launcher")
         probe = probe_rtl_sdr_device(force=force_probe)
         log_snapshot = self._log_snapshot()
-        running = self._process is not None
+        managed_process_ids = self._managed_process_ids()
+        running = self._process is not None or bool(managed_process_ids)
+        process_id = self._process.pid if self._process is not None else (managed_process_ids[0] if managed_process_ids else None)
 
         health = "stopped"
         message = "Bundled SDRTrunk decoder is stopped."
@@ -236,10 +303,12 @@ class SdrTrunkRuntime:
             "installed": launcher is not None,
             "managed": True,
             "headless": False,
+            "engine": "sdrtrunk",
             "running": running,
             "health": health,
             "message": message,
-            "pid": self._process.pid if self._process is not None else None,
+            "pid": process_id,
+            "processes": {"sdrtrunk": managed_process_ids} if managed_process_ids else {},
             "launcher_path": str(launcher) if launcher is not None else None,
             "profile_root": str(self.profile_root),
             "playlist_path": str(self.playlist_path()) if self.playlist_path().exists() else None,
@@ -296,10 +365,21 @@ class SdrTrunkRuntime:
 
     def stop(self) -> dict[str, object]:
         self._refresh_process()
+        process_ids = set(self._managed_process_ids())
         if self._process is not None:
+            process_ids.add(self._process.pid)
             try:
-                self._process.terminate()
-                self._process.wait(timeout=5)
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=5,
+                        startupinfo=_hidden_startupinfo(),
+                        creationflags=_creation_flags(),
+                    )
+                else:
+                    self._process.terminate()
+                    self._process.wait(timeout=5)
             except (subprocess.TimeoutExpired, OSError):
                 try:
                     self._process.kill()
@@ -307,6 +387,18 @@ class SdrTrunkRuntime:
                     pass
             finally:
                 self._process = None
+        if os.name == "nt":
+            for process_id in process_ids:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process_id), "/T", "/F"],
+                        capture_output=True,
+                        timeout=5,
+                        startupinfo=_hidden_startupinfo(),
+                        creationflags=_creation_flags(),
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
         self._last_error = None
         self._started_at = None
         return self.status(force_probe=False)

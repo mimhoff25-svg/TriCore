@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -32,13 +32,20 @@ class Channel(BaseModel):
     service_type: str = "custom"
     bank_id: str = "custom"
     system_name: str = "Local"
+    category: str = "other"
+    p25_talkgroup_decimal: Optional[int] = None
+    p25_control_channels_hz: list[int] = Field(default_factory=list)
     encrypted: bool = False
     unavailable: bool = False
     favorite: bool = False
     priority: bool = False
+    scan_enabled: bool = True
     locked_out: bool = False
+    delay_seconds: float = 2.0
+    number_tag: Optional[int] = None
     notes: Optional[str] = None
     signal_level: float = -100.0
+    stream_url: Optional[str] = None
 
     @computed_field
     @property
@@ -105,6 +112,20 @@ class DecoderStatus(BaseModel):
     ready: bool = True
     active: bool = False
     message: str = "Decoder idle."
+    sync_state: Optional[str] = None
+    control_channel_hz: Optional[int] = None
+    control_channels_hz: list[int] = Field(default_factory=list)
+    voice_frequency_hz: Optional[int] = None
+    talkgroup_decimal: Optional[int] = None
+    selected_talkgroup_decimal: Optional[int] = None
+    source_radio_id: Optional[str] = None
+    target_radio_id: Optional[str] = None
+    nac: Optional[str] = None
+    phase: Optional[str] = None
+    encrypted_call: bool = False
+    recent_radios: list[dict[str, Any]] = Field(default_factory=list)
+    activity: dict[str, Any] = Field(default_factory=dict)
+    runtime: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchRange(BaseModel):

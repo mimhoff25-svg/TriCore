@@ -11,10 +11,44 @@ from ..core.scanner_actions import (
     SearchStartPayload,
     SquelchPayload,
 )
+from .audio_routes import stop_live_audio_process
 from .shared import scanner_core
 
 
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
+
+
+def _sync_transcriber_to_status(status):
+    from ..transcriber import transcriber
+
+    if not transcriber.running:
+        return status
+
+    transcriber.stop()
+    scanner_core.restore_rtl_receiver_after_external_audio()
+
+    channel = status.current_channel or status.active_channel
+    if channel is None:
+        return status
+
+    modulation = str(channel.modulation or "nfm").lower()
+    if modulation not in {"nfm", "am"}:
+        return status
+
+    stop_live_audio_process()
+    scanner_core.release_rtl_receiver_for_external_audio()
+    started = transcriber.start([channel])
+    if not started.get("ok"):
+        scanner_core.restore_rtl_receiver_after_external_audio()
+
+    return status
+
+
+def _prepare_tuner_change() -> None:
+    stop_live_audio_process()
+    current_channel = scanner_core.current_channel
+    if current_channel is None or current_channel.modulation != "p25_placeholder":
+        scanner_core.shutdown_managed_p25_runtime(clear_current=False)
 
 
 @router.get("/status")
@@ -24,16 +58,19 @@ def scanner_status():
 
 @router.post("/start")
 def start_scanner():
+    _prepare_tuner_change()
     return scanner_core.start()
 
 
 @router.post("/stop")
 def stop_scanner():
+    _prepare_tuner_change()
     return scanner_core.stop()
 
 
 @router.post("/pause")
 def pause_scanner():
+    _prepare_tuner_change()
     return scanner_core.pause()
 
 
@@ -64,11 +101,13 @@ def clear_hold_scanner():
 
 @router.post("/skip")
 def skip_channel():
+    _prepare_tuner_change()
     return scanner_core.skip()
 
 
 @router.post("/next")
 def next_channel():
+    _prepare_tuner_change()
     return scanner_core.next_channel()
 
 
@@ -84,22 +123,28 @@ def set_priority(payload: PriorityPayload = PriorityPayload()):
 
 @router.post("/manual-tune")
 def manual_tune(payload: ManualTunePayload):
-    return scanner_core.manual_tune(
+    _prepare_tuner_change()
+    status = scanner_core.manual_tune(
         frequency_hz=payload.frequency_hz,
         frequency_mhz=payload.frequency_mhz,
         modulation=payload.modulation,
         name=payload.name,
     )
+    return _sync_transcriber_to_status(status)
 
 
 @router.post("/tune")
 def tune_channel(payload: ChannelActionPayload):
-    return scanner_core.tune_channel(payload.channel_id or "")
+    _prepare_tuner_change()
+    status = scanner_core.tune_channel(payload.channel_id or "")
+    return _sync_transcriber_to_status(status)
 
 
 @router.post("/search/start")
 def start_search(payload: SearchStartPayload = SearchStartPayload()):
-    return scanner_core.start_search(payload.range_id)
+    _prepare_tuner_change()
+    status = scanner_core.start_search(payload.range_id)
+    return _sync_transcriber_to_status(status)
 
 
 @router.post("/search/stop")
@@ -124,4 +169,5 @@ def set_mute(payload: dict):
 
 @router.post("/receiver-mode")
 def legacy_receiver_mode(payload: ReceiverModePayload):
+    stop_live_audio_process()
     return scanner_core.set_receiver_mode(payload.simulated)

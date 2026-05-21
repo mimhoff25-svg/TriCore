@@ -14,14 +14,9 @@ function formatFreq(hz) {
 export default function RadioLog({ transcripts, transcriptStatus, onStart, onStop, onClear }) {
   const bottomRef = useRef(null);
 
-  const rankedTranscripts = useMemo(() => {
+  const chronologicalTranscripts = useMemo(() => {
     const list = Array.isArray(transcripts) ? [...transcripts] : [];
-    return list.sort((a, b) => {
-      const prioA = Number(a?.priority || 1);
-      const prioB = Number(b?.priority || 1);
-      if (prioA !== prioB) return prioB - prioA;
-      return String(b?.timestamp || "").localeCompare(String(a?.timestamp || ""));
-    });
+    return list.sort((a, b) => String(a?.timestamp || "").localeCompare(String(b?.timestamp || "")));
   }, [transcripts]);
 
   useEffect(() => {
@@ -31,19 +26,35 @@ export default function RadioLog({ transcripts, transcriptStatus, onStart, onSto
   const running = transcriptStatus?.running;
   const current = transcriptStatus?.current_channel;
   const error = transcriptStatus?.error;
+  const currentAudioLevel = Number(transcriptStatus?.current_audio_level || 0);
+  const currentSignalLevel = Number(transcriptStatus?.current_signal_level ?? -100);
+  const currentRadioId = transcriptStatus?.current_radio_id || transcriptStatus?.current_source_radio_id;
+  const hearingAudio = running && Number.isFinite(currentAudioLevel) && currentAudioLevel >= 0.05;
+  const receivingCarrier = running && Number.isFinite(currentSignalLevel) && currentSignalLevel > -55;
+  const emptyStateText = running
+    ? hearingAudio
+      ? "Receiving audio. Transcription will appear here when speech is decoded."
+      : receivingCarrier
+        ? "Signal detected. Waiting for intelligible voice audio..."
+        : "Waiting for voice traffic..."
+    : "Start transcription to dictate the active radio channel.";
 
   return (
-    <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#0d1b2a]/70 p-4 backdrop-blur-md">
-      {/* Header row */}
+    <div className="flex flex-col gap-3 rounded-lg border border-white/10 bg-[#101720] p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-widest text-triCoreAmber">
-            Radio Log
+            Voice To Text
           </span>
           {running && (
             <span className="flex items-center gap-1 rounded-full bg-triCoreGreen/15 px-2 py-0.5 text-[10px] font-medium text-triCoreGreen">
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-triCoreGreen" />
               {current ? current : "Listening"}
+            </span>
+          )}
+          {running && currentRadioId && (
+            <span className="rounded-full bg-triCoreBlue/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-triCoreBlue">
+              RID {currentRadioId}
             </span>
           )}
           {error && (
@@ -77,44 +88,53 @@ export default function RadioLog({ transcripts, transcriptStatus, onStart, onSto
         </div>
       </div>
 
-      {/* Transcript list */}
-      <div className="flex max-h-52 flex-col gap-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
-        {(!rankedTranscripts || rankedTranscripts.length === 0) && (
+      <div className="flex max-h-80 min-h-52 flex-col gap-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+        {(!chronologicalTranscripts || chronologicalTranscripts.length === 0) && (
           <p className="py-4 text-center text-xs text-white/30">
-            {running ? "Waiting for voice traffic…" : "Start transcription to log radio chatter."}
+            {emptyStateText}
           </p>
         )}
-        {rankedTranscripts?.map((entry, i) => (
-          <div key={i} className="flex flex-col gap-0.5 rounded-lg bg-white/[0.03] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-triCoreBlue">
-                {entry.channel_name}
-              </span>
-              <span className="text-[10px] text-white/30">
-                {formatFreq(entry.frequency_hz)} &middot; {formatTime(entry.timestamp)}
-              </span>
+        {chronologicalTranscripts?.map((entry, i) => {
+          const entryRadioId = entry.radio_id || entry.source_radio_id || (
+            entry.talkgroup_decimal &&
+            transcriptStatus?.current_talkgroup_decimal &&
+            Number(entry.talkgroup_decimal) === Number(transcriptStatus.current_talkgroup_decimal)
+              ? currentRadioId
+              : null
+          );
+          return (
+          <div key={`${entry.timestamp || i}-${entry.frequency_hz || ""}`} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 rounded-lg bg-white/[0.03] px-3 py-2">
+            <div className="pt-0.5 font-mono text-[11px] font-semibold text-triCoreBlue">
+              {formatTime(entry.timestamp)}
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1">
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${Number(entry.priority || 1) >= 4 ? "bg-red-500/20 text-red-300" : Number(entry.priority || 1) >= 3 ? "bg-triCoreAmber/20 text-triCoreAmber" : "bg-white/10 text-white/60"}`}>
-                P{entry.priority || 1}
-              </span>
-              {entry.call_type && (
-                <span className="rounded-full bg-triCoreBlue/15 px-2 py-0.5 text-[10px] font-semibold text-triCoreBlue">
-                  {String(entry.call_type).replace(/_/g, " ")}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="truncate text-[10px] font-semibold text-slate-300">
+                  {entry.channel_name}
                 </span>
+                <span className="font-mono text-[10px] text-white/30">{formatFreq(entry.frequency_hz)}</span>
+                {entry.talkgroup_decimal && (
+                  <span className="rounded-full bg-triCoreBlue/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-triCoreBlue">
+                    TG {entry.talkgroup_decimal}
+                  </span>
+                )}
+                {entryRadioId && (
+                  <span className="rounded-full bg-triCoreGreen/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-triCoreGreen">
+                    RID {entryRadioId}
+                  </span>
+                )}
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${Number(entry.priority || 1) >= 4 ? "bg-red-500/20 text-red-300" : Number(entry.priority || 1) >= 3 ? "bg-triCoreAmber/20 text-triCoreAmber" : "bg-white/10 text-white/60"}`}>
+                  P{entry.priority || 1}
+                </span>
+              </div>
+              <p className="mt-1 text-sm leading-snug text-white/85">{entry.text}</p>
+              {entry.summary && (
+                <p className="mt-1 text-[10px] text-white/45">{entry.summary}</p>
               )}
-              {Array.isArray(entry.tags) && entry.tags.slice(0, 2).map((tag) => (
-                <span key={`${entry.timestamp}-${tag}`} className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/60">
-                  {tag}
-                </span>
-              ))}
             </div>
-            <p className="text-xs leading-snug text-white/80">{entry.text}</p>
-            {entry.summary && (
-              <p className="text-[10px] text-white/45">{entry.summary}</p>
-            )}
           </div>
-        ))}
+          );
+        })}
         <div ref={bottomRef} />
       </div>
     </div>

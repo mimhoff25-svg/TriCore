@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..core.scanner_actions import ReceiverModePayload
+from .audio_routes import stop_live_audio_process
 from .shared import scanner_core
 
 
@@ -16,5 +17,5 @@ def receiver_status():
 
 @router.post("/mode")
 def set_receiver_mode(payload: ReceiverModePayload):
+    stop_live_audio_process()
     return scanner_core.set_receiver_mode(payload.simulated)
-

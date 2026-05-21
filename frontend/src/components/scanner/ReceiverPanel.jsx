@@ -1,5 +1,9 @@
 import { Radio, SlidersHorizontal } from "lucide-react";
 
+function titleCase(value) {
+  return String(value || "--").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function ReceiverPanel({
   receiver,
   status,
@@ -10,11 +14,32 @@ export default function ReceiverPanel({
   onSquelch,
 }) {
   const simulated = Boolean(receiver?.simulated);
+  const p25Runtime = status?.decoder?.modulation === "p25_placeholder" && status?.decoder?.runtime && typeof status.decoder.runtime === "object"
+    ? status.decoder.runtime
+    : null;
+  const p25BusyDevices = Array.isArray(p25Runtime?.busy_device_numbers)
+    ? p25Runtime.busy_device_numbers
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    : [];
+  const p25RuntimeRows = p25Runtime
+    ? [
+        p25Runtime?.health ? ["Managed P25", titleCase(p25Runtime.health)] : null,
+        Number.isFinite(Number(p25Runtime?.device_count)) && Number(p25Runtime.device_count) > 0
+          ? ["RTL Devices Seen", String(Number(p25Runtime.device_count))]
+          : null,
+        p25BusyDevices.length ? ["Busy Devices", p25BusyDevices.map((value) => `#${value}`).join(", ")] : null,
+        Number.isFinite(Number(p25Runtime?.selected_device_number)) && Number(p25Runtime.selected_device_number) > 0
+          ? ["Chosen Device", `#${Number(p25Runtime.selected_device_number)}`]
+          : null,
+        p25Runtime?.selected_serial ? ["Chosen Serial", String(p25Runtime.selected_serial)] : null,
+        p25Runtime?.failing_serial ? ["Failing Serial", String(p25Runtime.failing_serial)] : null,
+      ].filter(Boolean)
+    : [];
   const frequencyText = Number.isFinite(Number(receiver?.tuned_frequency_hz)) && Number(receiver?.tuned_frequency_hz) > 0
     ? `${(Number(receiver.tuned_frequency_hz) / 1_000_000).toFixed(4)} MHz`
     : "--.---- MHz";
   const effectiveGain = gain === "auto" ? "Auto" : `${Number(gain).toFixed(1)} dB`;
-  const signalText = `${Number(receiver?.signal_level ?? status?.signal_level ?? -100).toFixed(1)} dB`;
   const lastRtlError = receiver?.last_rtl_error || receiver?.error_message || "None";
   const rows = [
     ["Receiver Mode", receiver?.label || status?.receiver_mode || "Demo"],
@@ -23,7 +48,6 @@ export default function ReceiverPanel({
     ["Tuned Frequency", frequencyText],
     ["Gain", effectiveGain],
     ["Squelch", `${Number(squelch).toFixed(0)} dB`],
-    ["Signal Level", signalText],
     ["Last RTL-SDR Error", lastRtlError],
   ];
 
@@ -88,6 +112,25 @@ export default function ReceiverPanel({
       />
       <div className="mt-1 text-sm font-semibold text-slate-300">{Number(squelch).toFixed(0)} dB</div>
 
+      {(p25Runtime?.error_detail || p25RuntimeRows.length) && (
+        <div className="mt-4 rounded-lg border border-triCoreAmber/25 bg-[rgba(74,48,8,0.28)] p-3 text-sm">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-triCoreAmber">Managed P25 Diagnostics</div>
+          {p25Runtime?.error_detail && (
+            <div className="mt-2 text-sm leading-5 text-[#fff1cf]">{p25Runtime.error_detail}</div>
+          )}
+          {p25RuntimeRows.length > 0 && (
+            <div className="mt-3 grid gap-2 rounded-lg border border-white/8 bg-black/15 p-3 text-sm">
+              {p25RuntimeRows.map(([label, value]) => (
+                <div key={label} className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</div>
+                  <div className="min-w-0 break-words font-semibold text-slate-100">{value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {receiver?.error_message && (
         <div className="mt-3 rounded-lg border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">
           {receiver.error_message}
@@ -96,4 +139,3 @@ export default function ReceiverPanel({
     </section>
   );
 }
-

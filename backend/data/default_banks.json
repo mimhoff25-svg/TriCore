@@ -53,8 +53,32 @@
       "name": "FM Broadcast",
       "service_type": "fm_broadcast",
       "enabled": false,
-      "priority": 80,
+      "priority": 1,
       "description": "Commercial and public FM broadcast stations."
+    },
+    {
+      "id": "p25-control",
+      "name": "P25 Control Test",
+      "service_type": "public_safety",
+      "enabled": false,
+      "priority": 8,
+      "description": "Starter GATRRS control channels for one-by-one P25 testing."
+    },
+    {
+      "id": "tcso-p25",
+      "name": "TCSO P25 Test",
+      "service_type": "public_safety",
+      "enabled": true,
+      "priority": 9,
+      "description": "Starter Travis County SO talkgroups for one-by-one P25 testing."
+    },
+    {
+      "id": "gatrrs-p25",
+      "name": "GATRRS P25 Talkgroups",
+      "service_type": "public_safety",
+      "enabled": false,
+      "priority": 11,
+      "description": "All configured GATRRS talkgroups, grouped by category in the P25 panel."
     },
     {
       "id": "business-local",

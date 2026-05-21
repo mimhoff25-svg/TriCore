@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from typing import Any, Optional
 
 from ..decoder_runtime import probe_rtl_sdr_device
@@ -13,11 +14,16 @@ from .signal_meter import squelch_open
 
 DEFAULT_SAMPLE_RATE_HZ = 1_024_000
 DEFAULT_READ_SIZE = 16_384
+OPEN_RETRY_COOLDOWN_SECONDS = 5.0
+ACCESS_DENIED_RETRY_COOLDOWN_SECONDS = 15.0
+MIN_TUNABLE_FREQUENCY_HZ = 24_000_000
+MAX_TUNABLE_FREQUENCY_HZ = 1_766_000_000
 
 
 class RtlSdrReceiver(BaseReceiver):
-    def __init__(self, device_index: int = 0) -> None:
+    def __init__(self, device_index: int = 0, open_device: bool = True) -> None:
         self.device_index = device_index
+        self.open_device = open_device
         self.frequency_hz: Optional[int] = None
         self.modulation = "nfm"
         self.gain_db: Optional[float] = None
@@ -30,17 +36,37 @@ class RtlSdrReceiver(BaseReceiver):
         self._library_error: Optional[str] = None
         self._dll_handles: list[Any] = []
         self._searched_library_dirs: list[str] = []
+        self._next_open_retry_at = 0.0
         self._prepare_rtl_environment()
-        self._rtl_class = self._load_rtl_class()
-        self._open_device()
+        self._rtl_class = self._load_rtl_class() if open_device else None
+        if open_device:
+            self._open_device()
 
     @property
     def available(self) -> bool:
+        if not self.open_device:
+            return bool(self._snapshot.get("available")) and self._last_error is None
         return self._device is not None and self._last_error is None
+
+    @staticmethod
+    def supports_frequency(frequency_hz: int) -> bool:
+        return MIN_TUNABLE_FREQUENCY_HZ <= int(frequency_hz) <= MAX_TUNABLE_FREQUENCY_HZ
 
     def tune(self, frequency_hz: int, modulation: str = "nfm") -> ReceiverStatus:
         self.frequency_hz = int(frequency_hz)
         self.modulation = modulation
+        if not self.supports_frequency(self.frequency_hz):
+            self._last_error = (
+                f"RTL-SDR frequency {self.frequency_hz / 1_000_000:.6f} MHz is outside "
+                f"the supported tuner range of {MIN_TUNABLE_FREQUENCY_HZ / 1_000_000:.1f}-"
+                f"{MAX_TUNABLE_FREQUENCY_HZ / 1_000_000:.0f} MHz."
+            )
+            return self.status()
+
+        if not self.open_device:
+            self._last_error = None
+            return self.status()
+
         if not self._ensure_open():
             return self.status()
 
@@ -55,7 +81,7 @@ class RtlSdrReceiver(BaseReceiver):
 
     def set_gain(self, gain_db: Optional[float]) -> ReceiverStatus:
         self.gain_db = gain_db
-        if self._ensure_open():
+        if self._device is not None and self._last_error is None:
             self._apply_gain()
         return self.status()
 
@@ -64,7 +90,7 @@ class RtlSdrReceiver(BaseReceiver):
         return self.status()
 
     def read_signal(self) -> SignalReading:
-        if not self._ensure_open():
+        if self._device is None or self._last_error is not None:
             return SignalReading(
                 frequency_hz=int(self.frequency_hz or 0),
                 level_db=-100.0,
@@ -90,7 +116,8 @@ class RtlSdrReceiver(BaseReceiver):
 
     def refresh(self) -> ReceiverStatus:
         self._snapshot = probe_rtl_sdr_device(force=True)
-        if self._device is None:
+        self._next_open_retry_at = 0.0
+        if self.open_device and self._device is None:
             self._open_device()
         return self.status()
 
@@ -113,6 +140,7 @@ class RtlSdrReceiver(BaseReceiver):
                 last_rtl_error=message,
             )
 
+        message = "RTL-SDR receiver connected." if self.open_device else "RTL-SDR tuner detected. External audio tools are available."
         return ReceiverStatus(
             mode="rtl_sdr",
             label="RTL-SDR",
@@ -124,7 +152,7 @@ class RtlSdrReceiver(BaseReceiver):
             gain_db=self.gain_db,
             squelch_db=self.squelch_db,
             signal_level=self._last_signal_db,
-            message="RTL-SDR receiver connected.",
+            message=message,
         )
 
     def close(self) -> None:
@@ -183,16 +211,22 @@ class RtlSdrReceiver(BaseReceiver):
                 self._device.center_freq = self.frequency_hz
             self._apply_gain()
             self._last_error = None
+            self._next_open_retry_at = 0.0
             return True
         except Exception as exc:
             self._device = None
             probe_message = str(self._snapshot.get("message") or "No RTL-SDR tuner could be opened.")
-            self._mark_unavailable(f"RTL-SDR open failed: {exc}. {probe_message}")
+            failure_message = f"RTL-SDR open failed: {exc}. {probe_message}"
+            self._mark_unavailable(failure_message)
+            retry_delay = ACCESS_DENIED_RETRY_COOLDOWN_SECONDS if "access denied" in failure_message.lower() else OPEN_RETRY_COOLDOWN_SECONDS
+            self._next_open_retry_at = time.monotonic() + retry_delay
             return False
 
     def _ensure_open(self) -> bool:
         if self._device is not None and self._last_error is None:
             return True
+        if time.monotonic() < self._next_open_retry_at:
+            return False
         return self._open_device()
 
     def _apply_gain(self) -> None:

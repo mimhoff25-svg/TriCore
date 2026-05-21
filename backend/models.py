@@ -21,6 +21,7 @@ class Channel(BaseModel):
     department: Optional[str] = None
     primary_radio_id: Optional[str] = None
     target_radio_id: Optional[str] = None
+    stream_url: Optional[str] = None
 
 
 class ChannelCreate(BaseModel):

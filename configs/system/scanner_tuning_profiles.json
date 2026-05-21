@@ -1,0 +1,93 @@
+{
+  "description": "Scanner tuning profiles for different radio types and dwell settings",
+  "dwell_profiles": {
+    "railroad": {
+      "service_type": "railroad",
+      "dwell_seconds": 2.0,
+      "hold_after_signal_seconds": 1.5,
+      "delay_after_transmission_seconds": 1.5,
+      "modulation": "nfm",
+      "bandwidth_hz": 12500,
+      "step_hz": 12500,
+      "squelch_db": -65,
+      "notes": "Union Pacific and other freight railroad VHF narrow FM, 160-161 MHz band"
+    },
+    "aviation": {
+      "service_type": "airband",
+      "dwell_seconds": 1.5,
+      "hold_after_signal_seconds": 1.5,
+      "delay_after_transmission_seconds": 1.5,
+      "modulation": "am",
+      "bandwidth_hz": 10000,
+      "step_hz": 25000,
+      "squelch_db": -70,
+      "notes": "Aviation AM voice channels, 118-137 MHz airband. Receive-only scanner."
+    },
+    "public_safety": {
+      "service_type": "public_safety",
+      "dwell_seconds": 2.0,
+      "hold_after_signal_seconds": 1.0,
+      "delay_after_transmission_seconds": 1.0,
+      "modulation": "nfm",
+      "bandwidth_hz": 12500,
+      "step_hz": 12500,
+      "squelch_db": -68,
+      "notes": "Public safety VHF/UHF narrow FM, police/fire/EMS"
+    },
+    "fire_ems": {
+      "service_type": "fire_ems",
+      "dwell_seconds": 2.0,
+      "hold_after_signal_seconds": 2.0,
+      "delay_after_transmission_seconds": 1.5,
+      "modulation": "nfm",
+      "bandwidth_hz": 12500,
+      "step_hz": 12500,
+      "squelch_db": -65,
+      "notes": "Fire/EMS dispatch channels, hold longer for reply traffic"
+    },
+    "noaa_weather": {
+      "service_type": "noaa_weather",
+      "dwell_seconds": 5.0,
+      "hold_after_signal_seconds": 0.5,
+      "delay_after_transmission_seconds": 0.0,
+      "modulation": "nfm",
+      "bandwidth_hz": 12500,
+      "step_hz": 12500,
+      "squelch_db": -72,
+      "notes": "NOAA Weather Radio continuous broadcast, slow scan"
+    },
+    "fm_broadcast": {
+      "service_type": "fm_broadcast",
+      "dwell_seconds": 3.0,
+      "hold_after_signal_seconds": 2.0,
+      "delay_after_transmission_seconds": 0.0,
+      "modulation": "wfm",
+      "bandwidth_hz": 200000,
+      "step_hz": 200000,
+      "squelch_db": -60,
+      "notes": "Commercial FM broadcast wide FM, 88-108 MHz"
+    },
+    "business": {
+      "service_type": "business",
+      "dwell_seconds": 1.5,
+      "hold_after_signal_seconds": 1.0,
+      "delay_after_transmission_seconds": 1.0,
+      "modulation": "nfm",
+      "bandwidth_hz": 12500,
+      "step_hz": 12500,
+      "squelch_db": -68,
+      "notes": "Business/security/maintenance narrow FM channels"
+    }
+  },
+  "recording_defaults": {
+    "record_audio": true,
+    "audio_format": "wav",
+    "sample_rate_hz": 16000,
+    "notes": "Audio recording enabled for transcription and playback"
+  },
+  "sdr_constraints": {
+    "rtl_min_frequency_hz": 24000000,
+    "rtl_max_frequency_hz": 1766000000,
+    "notes": "RTL-SDR tuner range limits; aviation and railroad within range"
+  }
+}

@@ -21,3 +21,6 @@ class BaseDecoder(ABC):
             "message": f"{self.label} ready for {channel.name}.",
         })
 
+    def stop(self) -> None:
+        return None
+

@@ -55,6 +55,7 @@ export default function SearchPanel({
           <option value="nfm">NFM</option>
           <option value="wfm">WFM</option>
           <option value="am">AM</option>
+          <option value="p25">P25</option>
         </select>
       </div>
       <button onClick={onManualTune} className="mt-2 w-full rounded-lg border border-triCoreGreen/30 bg-triCoreGreen px-3 py-2 text-sm font-semibold text-slate-950">

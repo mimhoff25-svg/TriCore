@@ -15,6 +15,8 @@ const isTest = process.env.TRICORE_TEST === "1";
 
 let mainWindow = null;
 let backendProcess = null;
+let allowAppExit = false;
+let backendShutdownPromise = null;
 
 function waitForBackend(timeoutMs = 12000) {
   const started = Date.now();
@@ -67,6 +69,107 @@ function startBackend() {
   });
 }
 
+function postToBackend(route, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const request = http.request(`${BACKEND_URL}${route}`, { method: "POST" }, (response) => {
+      response.resume();
+      finish(Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 300));
+    });
+
+    request.on("error", () => finish(false));
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error("timeout"));
+    });
+    request.end();
+  });
+}
+
+function waitForChildExit(childProcess, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (!childProcess || childProcess.exitCode !== null || childProcess.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      childProcess.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+
+    childProcess.once("exit", onExit);
+  });
+}
+
+function killBackendProcessTree(childProcess) {
+  if (!childProcess || !childProcess.pid) {
+    return Promise.resolve(false);
+  }
+
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const killer = spawn("taskkill", ["/PID", String(childProcess.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+
+      killer.on("error", () => {
+        try {
+          childProcess.kill();
+        } catch {
+          // Fall through; app exit will still proceed.
+        }
+        resolve(false);
+      });
+
+      killer.on("exit", () => resolve(true));
+    });
+  }
+
+  try {
+    childProcess.kill("SIGTERM");
+    return Promise.resolve(true);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+async function shutdownBackend() {
+  if (backendShutdownPromise) {
+    return backendShutdownPromise;
+  }
+
+  backendShutdownPromise = (async () => {
+    const trackedProcess = backendProcess;
+    const requestedShutdown = await postToBackend("/api/system/shutdown");
+
+    if (trackedProcess && requestedShutdown) {
+      const exited = await waitForChildExit(trackedProcess);
+      if (exited) {
+        return;
+      }
+    }
+
+    if (trackedProcess) {
+      await killBackendProcessTree(trackedProcess);
+    }
+  })().finally(() => {
+    backendShutdownPromise = null;
+  });
+
+  return backendShutdownPromise;
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -114,11 +217,16 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
+app.on("before-quit", (event) => {
+  if (allowAppExit) {
+    return;
   }
+
+  event.preventDefault();
+  shutdownBackend().finally(() => {
+    allowAppExit = true;
+    app.exit(0);
+  });
 });
 
 app.on("window-all-closed", () => {

@@ -13,6 +13,8 @@ const APP_ICON_PATH = path.join(FRONTEND_ROOT, "public", "icons", "tricore.ico")
 const isDev = process.argv.includes("--dev") || process.env.TRICORE_DESKTOP_DEV === "1";
 const isTest = process.env.TRICORE_TEST === "1";
 const RTLSDR_DLL_DIRS = [
+  path.join(PROJECT_ROOT, "runtime", "rtlsdrblog-release", "Release", "x64"),
+  path.join(PROJECT_ROOT, "runtime", "rtlsdrblog-release", "Release", "x86"),
   path.join(PROJECT_ROOT, "tools", "tricore-sdr", "rtl-sdr"),
   path.join(PROJECT_ROOT, "tools", "tricore-sdr", "dsdplus"),
   path.resolve(PROJECT_ROOT, "..", "..", "sdrpp_windows_x64"),
@@ -27,6 +29,8 @@ const RTLSDR_DLL_DIRS = [
 
 let mainWindow = null;
 let backendProcess = null;
+let allowAppExit = false;
+let backendShutdownPromise = null;
 const LOG_DIR = path.join(PROJECT_ROOT, "logs");
 const BACKEND_STDOUT_LOG = path.join(LOG_DIR, "backend.out.log");
 const BACKEND_STDERR_LOG = path.join(LOG_DIR, "backend.err.log");
@@ -74,6 +78,7 @@ try {
 app.commandLine.appendSwitch("disk-cache-dir", LOCAL_CACHE_DATA);
 app.commandLine.appendSwitch("gpu-disk-cache-dir", LOCAL_GPU_CACHE);
 app.commandLine.appendSwitch("media-cache-size", "0");
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 function appendLog(file, message) {
   try {
@@ -153,6 +158,130 @@ function isBackendAlive() {
       resolve(false);
     });
   });
+}
+
+function postToBackend(route, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timedOut = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const request = http.request(`${BACKEND_URL}${route}`, { method: "POST" }, (response) => {
+      response.resume();
+      finish(Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 300));
+    });
+
+    request.on("error", (error) => {
+      appendLog(
+        ELECTRON_LOG,
+        timedOut
+          ? `Backend POST ${route} timed out after ${timeoutMs}ms.`
+          : `Backend POST ${route} failed: ${error.message}`,
+      );
+      finish(false);
+    });
+
+    request.setTimeout(timeoutMs, () => {
+      timedOut = true;
+      request.destroy(new Error("timeout"));
+    });
+
+    request.end();
+  });
+}
+
+function waitForChildExit(childProcess, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (!childProcess || childProcess.exitCode !== null || childProcess.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      childProcess.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+
+    childProcess.once("exit", onExit);
+  });
+}
+
+function killBackendProcessTree(childProcess) {
+  if (!childProcess || !childProcess.pid) {
+    return Promise.resolve(false);
+  }
+
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const killer = spawn("taskkill", ["/PID", String(childProcess.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+
+      killer.on("error", (error) => {
+        appendLog(ELECTRON_LOG, `taskkill failed for backend pid=${childProcess.pid}: ${error.message}`);
+        try {
+          childProcess.kill();
+        } catch {
+          // Fall through; app exit will still proceed.
+        }
+        resolve(false);
+      });
+
+      killer.on("exit", () => {
+        appendLog(ELECTRON_LOG, `Forced backend tree shutdown for pid=${childProcess.pid}.`);
+        resolve(true);
+      });
+    });
+  }
+
+  try {
+    childProcess.kill("SIGTERM");
+    return Promise.resolve(true);
+  } catch (error) {
+    appendLog(ELECTRON_LOG, `Backend kill failed for pid=${childProcess.pid}: ${error.message}`);
+    return Promise.resolve(false);
+  }
+}
+
+async function shutdownBackend() {
+  if (backendShutdownPromise) {
+    return backendShutdownPromise;
+  }
+
+  backendShutdownPromise = (async () => {
+    const trackedProcess = backendProcess;
+    const requestedShutdown = await postToBackend("/api/system/shutdown");
+
+    if (requestedShutdown) {
+      appendLog(ELECTRON_LOG, "Requested backend shutdown via API.");
+    }
+
+    if (trackedProcess && requestedShutdown) {
+      const exited = await waitForChildExit(trackedProcess);
+      if (exited) {
+        appendLog(ELECTRON_LOG, `Backend pid=${trackedProcess.pid} exited after API shutdown.`);
+        return;
+      }
+      appendLog(ELECTRON_LOG, `Backend pid=${trackedProcess.pid} did not exit after API shutdown; forcing tree kill.`);
+    }
+
+    if (trackedProcess) {
+      await killBackendProcessTree(trackedProcess);
+    }
+  })().finally(() => {
+    backendShutdownPromise = null;
+  });
+
+  return backendShutdownPromise;
 }
 
 async function startBackend() {
@@ -282,11 +411,20 @@ process.on("unhandledRejection", (reason) => {
   appendLog(ELECTRON_LOG, `Unhandled rejection: ${reason && reason.stack ? reason.stack : reason}`);
 });
 
-app.on("before-quit", () => {
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
+app.on("before-quit", (event) => {
+  if (allowAppExit) {
+    return;
   }
+
+  event.preventDefault();
+  shutdownBackend()
+    .catch((error) => {
+      appendLog(ELECTRON_LOG, `Backend shutdown failed: ${error.stack || error.message}`);
+    })
+    .finally(() => {
+      allowAppExit = true;
+      app.exit(0);
+    });
 });
 
 app.on("window-all-closed", () => {

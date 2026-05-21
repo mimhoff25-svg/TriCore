@@ -40,7 +40,6 @@ export default function ChannelChart({ channels = [], banks = [], activeChannel,
               <th className="px-3 py-2">Channel</th>
               <th className="px-3 py-2">Frequency</th>
               <th className="px-3 py-2">Modulation</th>
-              <th className="px-3 py-2">Signal</th>
               <th className="px-3 py-2">Priority</th>
               <th className="px-3 py-2">Status</th>
             </tr>
@@ -49,19 +48,17 @@ export default function ChannelChart({ channels = [], banks = [], activeChannel,
             {channels.map((channel) => {
               const active = activeChannel?.id === channel.id;
               const channelState = channelStatus(channel, activeChannel, status, receiver);
-              const signal = active ? Number(status?.signal_level ?? -100).toFixed(1) : "--";
               return (
                 <tr
                   key={channel.id}
                   onClick={() => onTune?.(channel.id)}
-                  className={`cursor-pointer border-t border-white/5 hover:bg-white/5 ${active ? "bg-triCoreGreen/10" : ""}`}
+                  className={`cursor-pointer border-t border-white/5 hover:bg-white/5 ${active ? "bg-triCoreGreen/20 outline outline-1 outline-triCoreGreen/50" : channel.unavailable ? "opacity-45" : ""}`}
                 >
-                  <td className="px-3 py-2 text-slate-300">{bankNames.get(channel.bank_id) || channel.bank_id}</td>
+                  <td className={`px-3 py-2 ${active ? "font-semibold text-triCoreGreen" : "text-slate-300"}`}>{bankNames.get(channel.bank_id) || channel.bank_id}</td>
                   <td className="px-3 py-2 text-slate-400">{formatService(channel.service_type)}</td>
-                  <td className="px-3 py-2 font-semibold text-white">{channel.name}</td>
+                  <td className={`px-3 py-2 font-semibold ${active ? "text-triCoreGreen" : "text-white"}`}>{channel.name}</td>
                   <td className="px-3 py-2 font-mono text-slate-200">{formatMHz(channel.frequency_hz)} MHz</td>
                   <td className="px-3 py-2 uppercase text-slate-400">{channel.modulation}</td>
-                  <td className="px-3 py-2 font-mono text-slate-400">{signal === "--" ? signal : `${signal} dB`}</td>
                   <td className="px-3 py-2 text-slate-400">{channel.priority ? "Yes" : "No"}</td>
                   <td className={`px-3 py-2 font-semibold ${channelState === "Unavailable" ? "text-red-300" : channelState === "Hidden" ? "text-triCoreAmber" : channelState === "Holding" ? "text-triCoreAmber" : channelState === "Scanning" ? "text-triCoreGreen" : "text-slate-200"}`}>
                     {channelState}
@@ -75,4 +72,3 @@ export default function ChannelChart({ channels = [], banks = [], activeChannel,
     </section>
   );
 }
-

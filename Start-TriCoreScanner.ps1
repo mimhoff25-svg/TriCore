@@ -9,6 +9,8 @@ $PythonExe = Join-Path $BackendDir ".venv\Scripts\python.exe"
 $DesktopShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "TriCore Scanner.lnk"
 $IconPath = Join-Path $FrontendDir "public\icons\tricore.ico"
 $RtlSdrDllDirs = @(
+    (Join-Path $ProjectRoot "runtime\rtlsdrblog-release\Release\x64"),
+    (Join-Path $ProjectRoot "runtime\rtlsdrblog-release\Release\x86"),
     (Join-Path $ProjectRoot "..\..\sdrpp_windows_x64"),
     (Join-Path $ProjectRoot "..\..\sdrpp_windows_x64\sdrpp_windows_x64"),
     (Join-Path $ProjectRoot "..\..\sdrpp_windows_x64\DSDPlus"),
@@ -18,6 +20,33 @@ $RtlSdrDllDirs = @(
     "C:\Program Files\rtl-sdr",
     "C:\Program Files (x86)\rtl-sdr"
 )
+
+function Focus-ExistingTriCoreWindow {
+    $ExistingApp = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -eq "electron.exe" -and
+            $_.CommandLine -and
+            $_.CommandLine -like "*tricore-scanner*"
+        } |
+        Select-Object -First 1
+
+    if (-not $ExistingApp) {
+        return $false
+    }
+
+    try {
+        $WshShell = New-Object -ComObject WScript.Shell
+        if ($WshShell.AppActivate("TriCore Scanner")) {
+            Write-Host "TriCore Scanner is already running." -ForegroundColor Green
+            return $true
+        }
+    }
+    catch {
+        return $false
+    }
+
+    return $false
+}
 
 function Get-BootstrapPython {
     $py = Get-Command py -ErrorAction SilentlyContinue
@@ -88,7 +117,7 @@ function Ensure-DesktopShortcut {
         $WshShell = New-Object -ComObject WScript.Shell
         $Shortcut = $WshShell.CreateShortcut($DesktopShortcutPath)
         $Shortcut.TargetPath = "powershell.exe"
-        $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        $Shortcut.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`""
         $Shortcut.WorkingDirectory = $ProjectRoot
         $Shortcut.Description = "Launch TriCore Scanner desktop app"
         if (Test-Path $IconPath) {
@@ -100,6 +129,10 @@ function Ensure-DesktopShortcut {
     catch {
         Write-Host "Could not create desktop shortcut: $($_.Exception.Message)" -ForegroundColor Yellow
     }
+}
+
+if (Focus-ExistingTriCoreWindow) {
+    exit 0
 }
 
 Ensure-BackendEnvironment

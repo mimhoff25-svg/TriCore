@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from .shared import scanner_core
 
 
 router = APIRouter(prefix="/api", tags=["frequencies"])
+
+
+class ScanSelectionPayload(BaseModel):
+    enabled: bool
+    channel_ids: list[str] = Field(default_factory=list)
+    talkgroup_decimals: list[int] = Field(default_factory=list)
 
 
 @router.get("/banks")
@@ -34,6 +41,11 @@ def disable_bank(bank_id: str):
 @router.get("/channels")
 def get_channels():
     return scanner_core.channels()
+
+
+@router.post("/scan-selection")
+def set_scan_selection(payload: ScanSelectionPayload):
+    return scanner_core.set_scan_selection(payload.channel_ids, payload.talkgroup_decimals, payload.enabled)
 
 
 @router.get("/bandplans")

@@ -7,6 +7,7 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROJECT_ROOT.parents[1]
 RUNTIME_ROOT = PROJECT_ROOT / "tools" / "tricore-sdr"
+RTLSDRBLOG_RELEASE_ROOT = PROJECT_ROOT / "runtime" / "rtlsdrblog-release" / "Release"
 
 
 def runtime_tool_candidates() -> dict[str, list[Path]]:
@@ -16,11 +17,15 @@ def runtime_tool_candidates() -> dict[str, list[Path]]:
             WORKSPACE_ROOT / "sdrpp_windows_x64" / "DSDPlus" / "FMP24.exe",
         ],
         "rtl_fm": [
+            RTLSDRBLOG_RELEASE_ROOT / "x64" / "rtl_fm.exe",
+            RTLSDRBLOG_RELEASE_ROOT / "x86" / "rtl_fm.exe",
             RUNTIME_ROOT / "rtl-sdr" / "rtl_fm.exe",
             Path("C:/rtl-sdr/rtl_fm.exe"),
             WORKSPACE_ROOT / "sdrpp_windows_x64" / "rtl_fm.exe",
         ],
         "rtl_test": [
+            RTLSDRBLOG_RELEASE_ROOT / "x64" / "rtl_test.exe",
+            RTLSDRBLOG_RELEASE_ROOT / "x86" / "rtl_test.exe",
             RUNTIME_ROOT / "rtl-sdr" / "rtl_test.exe",
             Path("C:/rtl-sdr/rtl_test.exe"),
             WORKSPACE_ROOT / "sdrpp_windows_x64" / "rtl_test.exe",
@@ -59,6 +64,8 @@ def runtime_root() -> str:
 
 def rtl_sdr_library_dirs() -> list[Path]:
     candidates = [
+        RTLSDRBLOG_RELEASE_ROOT / "x64",
+        RTLSDRBLOG_RELEASE_ROOT / "x86",
         RUNTIME_ROOT / "rtl-sdr",
         RUNTIME_ROOT / "dsdplus",
         WORKSPACE_ROOT / "sdrpp_windows_x64",
