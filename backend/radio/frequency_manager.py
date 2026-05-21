@@ -414,10 +414,12 @@ class FrequencyManager:
     def get_bank(self, bank_id: str) -> Optional[Bank]:
         return next((bank for bank in self.banks if bank.id == bank_id), None)
 
-    def set_bank_enabled(self, bank_id: str, enabled: bool) -> Optional[Bank]:
+    def set_bank_enabled(self, bank_id: str, enabled: bool, apply_if_unchanged: bool = False) -> Optional[Bank]:
         bank = self.get_bank(bank_id)
         if bank is None:
             return None
+        if bank.enabled == enabled and not apply_if_unchanged:
+            return bank
         updated = bank.model_copy(update={"enabled": enabled})
         self.banks = [updated if item.id == bank_id else item for item in self.banks]
         channel_ids = [channel.id for channel in self.channels if channel.bank_id == bank_id]
@@ -469,7 +471,7 @@ class FrequencyManager:
     def set_talkgroup_scan_enabled_bulk(self, decimals: list[int], enabled: bool) -> int:
         updated_count = 0
         for decimal in {int(value) for value in decimals if value is not None}:
-            current = self._talkgroup_scan_overrides.get(decimal, False)
+            current = self.talkgroup_scan_enabled(decimal)
             if current == enabled:
                 continue
             self._talkgroup_scan_overrides[decimal] = enabled

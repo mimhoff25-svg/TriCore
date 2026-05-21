@@ -25,7 +25,7 @@ def enable_bank(bank_id: str):
     before = scanner_core.frequency_manager.get_bank(bank_id)
     if before is None:
         raise HTTPException(status_code=404, detail="Bank not found.")
-    scanner_core.set_bank_enabled(bank_id, True)
+    scanner_core.set_bank_enabled(bank_id, True, apply_if_unchanged=True)
     return scanner_core.frequency_manager.get_bank(bank_id)
 
 
@@ -34,7 +34,7 @@ def disable_bank(bank_id: str):
     before = scanner_core.frequency_manager.get_bank(bank_id)
     if before is None:
         raise HTTPException(status_code=404, detail="Bank not found.")
-    scanner_core.set_bank_enabled(bank_id, False)
+    scanner_core.set_bank_enabled(bank_id, False, apply_if_unchanged=True)
     return scanner_core.frequency_manager.get_bank(bank_id)
 
 
@@ -51,4 +51,3 @@ def set_scan_selection(payload: ScanSelectionPayload):
 @router.get("/bandplans")
 def get_bandplans():
     return scanner_core.bandplans()
-
